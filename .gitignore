@@ -1,0 +1,33 @@
+# Build artifacts
+/build/
+/coredns
+/valonctl
+result
+result-*
+
+# Go
+vendor/
+*.test
+*.prof
+*.out
+
+# OS
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# IDE
+.vscode/
+.idea/
+*.iml
+
+# etcd data (dev)
+/etcd-data/
+
+# Logs
+*.log
+
+# Temporary files
+/tmp/

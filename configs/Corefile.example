@@ -1,0 +1,35 @@
+# VALON CoreDNS Configuration Example
+# 
+# This is a minimal configuration for testing the VALON plugin.
+
+# VALON zone
+valon.internal:53 {
+    # VALON plugin configuration
+    valon {
+        # etcd endpoints (future use)
+        etcd_endpoints http://127.0.0.1:2379
+        
+        # WireGuard interface to monitor (future use)
+        wg_interface wg0
+        
+        # DDNS API listen address (future use)
+        ddns_listen 127.0.0.1:8080
+    }
+    
+    # Cache responses for 30 seconds
+    cache 30
+    
+    # Log all queries
+    log
+    
+    # Log errors
+    errors
+}
+
+# Forward all other queries to upstream DNS
+.:53 {
+    forward . 8.8.8.8 9.9.9.9
+    cache 30
+    log
+    errors
+}

@@ -25,7 +25,7 @@
         default = pkgs.mkShell {  
           # The Nix packages provided in the environment  
           packages = with pkgs; [  
-            go # Go 1.22  
+            go # Go 1.23
             gotools # Go tools like goimports, godoc, and others  
           ];  
         };  

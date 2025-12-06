@@ -5,15 +5,16 @@ package valon
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"log"
 	"net"
-	"os/exec"
 	"strings"
 	"time"
 
 	"github.com/coredns/coredns/plugin"
 	clientv3 "go.etcd.io/etcd/client/v3"
+	"golang.zx2c4.com/wireguard/wgctrl"
 )
 
 // Valon is the main plugin structure.
@@ -219,14 +220,22 @@ func (v *Valon) registerSelf() error {
 	return nil
 }
 
-// getOwnPublicKey retrieves this node's WireGuard public key.
+// getOwnPublicKey retrieves this node's WireGuard public key using wgctrl.
 func (v *Valon) getOwnPublicKey() (string, error) {
-	cmd := exec.Command("wg", "show", v.WgInterface, "public-key")
-	output, err := cmd.Output()
+	client, err := wgctrl.New()
 	if err != nil {
-		return "", fmt.Errorf("wg show public-key failed: %w", err)
+		return "", fmt.Errorf("failed to create wgctrl client: %w", err)
 	}
-	return strings.TrimSpace(string(output)), nil
+	defer client.Close()
+
+	device, err := client.Device(v.WgInterface)
+	if err != nil {
+		return "", fmt.Errorf("failed to get WireGuard device: %w", err)
+	}
+
+	// Convert public key to Base64 (standard WireGuard format)
+	pubkey := base64.StdEncoding.EncodeToString(device.PublicKey[:])
+	return pubkey, nil
 }
 
 // getOwnWireGuardIP retrieves this node's WireGuard interface IP address.

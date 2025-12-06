@@ -65,6 +65,19 @@ func (v *Valon) processPeer(peer *wgtypes.Peer) {
 	// Extract WireGuard overlay IP from allowed IPs
 	wgIP := v.extractWgIP(peer.AllowedIPs)
 
+	// Check if peer exists in cache
+	existing := v.cache.Get(pubkey)
+	if existing == nil {
+		// New peer detected but not registered via DDNS API
+		// Log for visibility, but don't auto-register (security by design)
+		if peer.LastHandshakeTime.After(time.Now().Add(-30 * time.Second)) {
+			// Only log if handshake is recent (avoid spam for old peers)
+			log.Printf("[valon] New peer detected: %s (wgIP: %s, endpoint: %s) - not in cache, awaiting DDNS registration",
+				pubkey[:16]+"...", wgIP, endpoint)
+		}
+		return
+	}
+
 	// Update cache
 	v.cache.Update(pubkey, func(p *PeerInfo) {
 		p.PubKey = pubkey

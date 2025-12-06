@@ -10,7 +10,7 @@ type PeerInfo struct {
 	PubKey        string    // Base64 WireGuard public key
 	WgIP          string    // WireGuard IP address (e.g., "100.64.0.1")
 	LANEndpoint   string    // LAN endpoint (e.g., "192.168.1.100:51820") - from DDNS API
-	NATEndpoint   string    // NAT endpoint (e.g., "203.0.113.1:51820") - from wg show
+	NATEndpoint   string    // NAT endpoint (e.g., "203.0.113.1:51820") - from wg show observation
 	LastHandshake time.Time // Last WireGuard handshake time
 	UpdatedAt     time.Time // Last update time
 	dirty         bool      // Needs etcd sync

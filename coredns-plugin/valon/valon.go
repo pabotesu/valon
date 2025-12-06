@@ -33,7 +33,7 @@ type Valon struct {
 	// Runtime
 	etcdClient *clientv3.Client // etcd client
 	cache      *PeerCache       // in-memory peer cache
-	// stopCh     chan struct{}    // stop signal for background goroutines (TODO: Phase 3/4)
+	stopCh     chan struct{}    // stop signal for background goroutines
 }
 
 // Name returns the plugin name.
@@ -97,10 +97,12 @@ func (v *Valon) Init() error {
 	log.Printf("[valon] WireGuard poll interval: %v", v.WgPollInterval)
 	log.Printf("[valon] etcd sync interval: %v", v.EtcdSyncInterval)
 
-	// TODO: Start background monitors
-	// v.stopCh = make(chan struct{})
-	// go v.wgMonitor()
-	// go v.etcdSyncer()
+	// Initialize stop channel
+	v.stopCh = make(chan struct{})
+
+	// Start background monitors
+	go v.startWgMonitor()
+	go v.startEtcdSync()
 
 	// TODO: Start DDNS HTTP server
 

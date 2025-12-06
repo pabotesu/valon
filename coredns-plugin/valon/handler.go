@@ -7,6 +7,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/coredns/coredns/plugin"
 	"github.com/coredns/coredns/request"
@@ -38,7 +39,7 @@ func (v Valon) ServeDNS(ctx context.Context, w dns.ResponseWriter, r *dns.Msg) (
 }
 
 // handleA handles A record queries.
-// Queries etcd for WireGuard IP address.
+// Supports both direct pubkey queries and CNAME aliases.
 func (v Valon) handleA(ctx context.Context, w dns.ResponseWriter, r *dns.Msg, state request.Request) (int, error) {
 	m := new(dns.Msg)
 	m.SetReply(r)
@@ -46,6 +47,7 @@ func (v Valon) handleA(ctx context.Context, w dns.ResponseWriter, r *dns.Msg, st
 
 	// Extract label from query name
 	// Format: <base32-label>.valon.internal. or lan.<base32-label>.valon.internal. or nated.<base32-label>.valon.internal.
+	// Or: <alias>.valon.internal. (CNAME to base32 label)
 	name := strings.TrimSuffix(state.Name(), v.Zone)
 	name = strings.TrimSuffix(name, ".")
 
@@ -62,13 +64,20 @@ func (v Valon) handleA(ctx context.Context, w dns.ResponseWriter, r *dns.Msg, st
 		isEndpoint = true
 		endpointType = "NAT"
 	} else {
-		// Direct pubkey query
+		// Could be direct pubkey query or alias
 		dnsLabel = name
 	}
 
-	// Convert DNS label (base32) to WireGuard pubkey (base64)
+	// Try to convert DNS label (base32) to WireGuard pubkey (base64)
 	pubkey, err := dnsLabelToPubkey(dnsLabel)
 	if err != nil {
+		// Not a valid base32 label, try alias lookup
+		if !isEndpoint {
+			if targetLabel := v.lookupAlias(ctx, dnsLabel); targetLabel != "" {
+				log.Printf("[valon] Alias lookup: %s -> %s", dnsLabel, targetLabel)
+				return v.returnCNAME(ctx, w, r, state, targetLabel)
+			}
+		}
 		log.Printf("[valon] Invalid DNS label format: %s (%v)", dnsLabel, err)
 		return v.nxdomain(w, r)
 	}
@@ -172,7 +181,7 @@ func (v Valon) handleSRV(ctx context.Context, w dns.ResponseWriter, r *dns.Msg, 
 		return v.nxdomain(w, r)
 	}
 
-	// Process LAN endpoint
+	// Process LAN endpoint (from DDNS API)
 	if peerInfo.LANEndpoint != "" {
 		endpoint := peerInfo.LANEndpoint
 		host, portStr, err := net.SplitHostPort(endpoint)
@@ -187,7 +196,7 @@ func (v Valon) handleSRV(ctx context.Context, w dns.ResponseWriter, r *dns.Msg, 
 					Class:  dns.ClassINET,
 					Ttl:    30,
 				},
-				Priority: 0,
+				Priority: 0, // Higher priority
 				Weight:   0,
 				Port:     uint16(port),
 				Target:   target,
@@ -208,11 +217,11 @@ func (v Valon) handleSRV(ctx context.Context, w dns.ResponseWriter, r *dns.Msg, 
 				}
 				m.Extra = append(m.Extra, a)
 			}
-			log.Printf("[valon] Added LAN SRV record: %s -> %s:%d (target: %s)", state.Name(), host, port, target)
+			log.Printf("[valon] Added LAN SRV record: %s -> %s:%d", state.Name(), host, port)
 		}
 	}
 
-	// Process NAT endpoint
+	// Process NAT endpoint (from wg show observation)
 	if peerInfo.NATEndpoint != "" {
 		endpoint := peerInfo.NATEndpoint
 		host, portStr, err := net.SplitHostPort(endpoint)
@@ -227,7 +236,7 @@ func (v Valon) handleSRV(ctx context.Context, w dns.ResponseWriter, r *dns.Msg, 
 					Class:  dns.ClassINET,
 					Ttl:    30,
 				},
-				Priority: 10, // Lower priority than LAN
+				Priority: 10, // Lower priority
 				Weight:   0,
 				Port:     uint16(port),
 				Target:   target,
@@ -248,7 +257,7 @@ func (v Valon) handleSRV(ctx context.Context, w dns.ResponseWriter, r *dns.Msg, 
 				}
 				m.Extra = append(m.Extra, a)
 			}
-			log.Printf("[valon] Added NAT SRV record: %s -> %s:%d (target: %s)", state.Name(), host, port, target)
+			log.Printf("[valon] Added NAT SRV record: %s -> %s:%d", state.Name(), host, port)
 		}
 	}
 
@@ -269,4 +278,79 @@ func (v Valon) nxdomain(w dns.ResponseWriter, r *dns.Msg) (int, error) {
 	m.Authoritative = true
 	w.WriteMsg(m)
 	return dns.RcodeNameError, nil
+}
+
+// lookupAlias queries etcd for CNAME alias mapping.
+// Returns the target base32 label if found, empty string otherwise.
+func (v Valon) lookupAlias(ctx context.Context, alias string) string {
+	key := fmt.Sprintf("/valon/aliases/%s", alias)
+
+	ctxTimeout, cancel := context.WithTimeout(ctx, 1*time.Second)
+	defer cancel()
+
+	resp, err := v.etcdClient.Get(ctxTimeout, key)
+	if err != nil {
+		log.Printf("[valon] etcd alias lookup error: %v", err)
+		return ""
+	}
+
+	if len(resp.Kvs) == 0 {
+		return ""
+	}
+
+	return strings.TrimSpace(string(resp.Kvs[0].Value))
+}
+
+// returnCNAME returns a CNAME record pointing to the target label,
+// along with the target's A record in the answer section.
+func (v Valon) returnCNAME(ctx context.Context, w dns.ResponseWriter, r *dns.Msg, state request.Request, targetLabel string) (int, error) {
+	m := new(dns.Msg)
+	m.SetReply(r)
+	m.Authoritative = true
+
+	// Create CNAME record
+	targetFQDN := fmt.Sprintf("%s.%s", targetLabel, v.Zone)
+	cname := &dns.CNAME{
+		Hdr: dns.RR_Header{
+			Name:   state.Name(),
+			Rrtype: dns.TypeCNAME,
+			Class:  dns.ClassINET,
+			Ttl:    30,
+		},
+		Target: targetFQDN,
+	}
+	m.Answer = append(m.Answer, cname)
+
+	// Resolve target and add A record
+	pubkey, err := dnsLabelToPubkey(targetLabel)
+	if err != nil {
+		log.Printf("[valon] Invalid target label in CNAME: %s (%v)", targetLabel, err)
+		w.WriteMsg(m) // Return CNAME only
+		return dns.RcodeSuccess, nil
+	}
+
+	peerInfo := v.cache.Get(pubkey)
+	if peerInfo == nil || peerInfo.WgIP == "" {
+		log.Printf("[valon] Target not found in cache for CNAME: %s", targetLabel)
+		w.WriteMsg(m) // Return CNAME only
+		return dns.RcodeSuccess, nil
+	}
+
+	ip := net.ParseIP(peerInfo.WgIP)
+	if ip != nil {
+		a := &dns.A{
+			Hdr: dns.RR_Header{
+				Name:   targetFQDN,
+				Rrtype: dns.TypeA,
+				Class:  dns.ClassINET,
+				Ttl:    30,
+			},
+			A: ip.To4(),
+		}
+		m.Answer = append(m.Answer, a)
+	}
+
+	log.Printf("[valon] Returning CNAME: %s -> %s -> %s", state.Name(), targetFQDN, peerInfo.WgIP)
+	w.WriteMsg(m)
+	return dns.RcodeSuccess, nil
 }

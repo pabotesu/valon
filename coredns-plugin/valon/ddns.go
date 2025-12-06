@@ -31,6 +31,7 @@ func (v *Valon) startDDNSServer() {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/endpoint", v.handleEndpointUpdate)
+	mux.HandleFunc("/api/endpoint/delete", v.handleEndpointDelete)
 	mux.HandleFunc("/health", v.handleHealth)
 
 	server := &http.Server{
@@ -51,6 +52,7 @@ func (v *Valon) startDDNSServer() {
 
 // handleEndpointUpdate handles POST /api/endpoint
 // Registers LAN endpoint for a peer.
+// If lan_endpoint is "0.0.0.0:0", it marks the peer as offline.
 func (v *Valon) handleEndpointUpdate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		v.sendError(w, http.StatusMethodNotAllowed, "Method not allowed")
@@ -69,7 +71,7 @@ func (v *Valon) handleEndpointUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate LAN endpoint format
+	// Validate LAN endpoint format (allow "0.0.0.0:0" for offline)
 	if req.LANEndpoint != "" {
 		if _, _, err := net.SplitHostPort(req.LANEndpoint); err != nil {
 			v.sendError(w, http.StatusBadRequest, "Invalid lan_endpoint format (expected IP:PORT)")
@@ -87,7 +89,11 @@ func (v *Valon) handleEndpointUpdate(w http.ResponseWriter, r *http.Request) {
 		p.UpdatedAt = time.Now()
 	})
 
-	log.Printf("[valon] DDNS: Updated LAN endpoint for %s: %s", req.PubKey, req.LANEndpoint)
+	if req.LANEndpoint == "0.0.0.0:0" {
+		log.Printf("[valon] DDNS: Peer %s marked as offline", req.PubKey)
+	} else {
+		log.Printf("[valon] DDNS: Updated LAN endpoint for %s: %s", req.PubKey, req.LANEndpoint)
+	}
 
 	// Register alias if provided
 	if req.Alias != "" {
@@ -116,6 +122,41 @@ func (v *Valon) handleEndpointUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	v.sendSuccess(w, "Endpoint updated successfully")
+}
+
+// handleEndpointDelete handles DELETE /api/endpoint/delete
+// Marks a peer as offline by setting endpoint to "0.0.0.0:0".
+func (v *Valon) handleEndpointDelete(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete && r.Method != http.MethodPost {
+		v.sendError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+
+	var req struct {
+		PubKey string `json:"pubkey"` // WireGuard public key (Base64)
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		v.sendError(w, http.StatusBadRequest, "Invalid JSON")
+		return
+	}
+
+	// Validate pubkey
+	if req.PubKey == "" {
+		v.sendError(w, http.StatusBadRequest, "pubkey is required")
+		return
+	}
+
+	// Update cache: set endpoint to "0.0.0.0:0" (offline marker)
+	v.cache.Update(req.PubKey, func(p *PeerInfo) {
+		p.PubKey = req.PubKey
+		p.LANEndpoint = "0.0.0.0:0"
+		p.dirty = true
+		p.UpdatedAt = time.Now()
+	})
+
+	log.Printf("[valon] DDNS: Peer %s endpoint deleted (marked offline)", req.PubKey)
+	v.sendSuccess(w, "Endpoint deleted successfully")
 }
 
 // handleHealth handles GET /health

@@ -1,17 +1,17 @@
 package valon
 
 import (
-	"bufio"
-	"bytes"
+	"encoding/base64"
 	"log"
-	"os/exec"
-	"strconv"
-	"strings"
+	"net"
 	"time"
+
+	"golang.zx2c4.com/wireguard/wgctrl"
+	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 )
 
 // startWgMonitor starts the WireGuard monitoring loop.
-// It polls `wg show <interface> dump` at the configured interval
+// It uses wgctrl library to query WireGuard interface state
 // and updates the memory cache with peer information.
 func (v *Valon) startWgMonitor() {
 	log.Printf("[valon] Starting WireGuard monitor (interval: %v)", v.WgPollInterval)
@@ -30,102 +30,66 @@ func (v *Valon) startWgMonitor() {
 	}
 }
 
-// pollWireGuard executes `wg show <interface> dump` and updates cache.
+// pollWireGuard queries WireGuard interface using wgctrl and updates cache.
 func (v *Valon) pollWireGuard() {
-	cmd := exec.Command("wg", "show", v.WgInterface, "dump")
-	output, err := cmd.Output()
+	client, err := wgctrl.New()
 	if err != nil {
-		log.Printf("[valon] wg show dump failed: %v", err)
+		log.Printf("[valon] Failed to create wgctrl client: %v", err)
+		return
+	}
+	defer client.Close()
+
+	device, err := client.Device(v.WgInterface)
+	if err != nil {
+		log.Printf("[valon] Failed to get WireGuard device %s: %v", v.WgInterface, err)
 		return
 	}
 
-	v.parseWgDump(output)
+	// Process each peer
+	for _, peer := range device.Peers {
+		v.processPeer(&peer)
+	}
 }
 
-// parseWgDump parses the output of `wg show <interface> dump`.
-//
-// Format:
-// Line 1 (interface): private-key  public-key  listen-port  fwmark
-// Line 2+ (peers):    public-key  preshared-key  endpoint  allowed-ips  latest-handshake  transfer-rx  transfer-tx  persistent-keepalive
-//
-// Example:
-// (hidden)	ABC123...	51820	off
-// DEF456...	(none)	192.168.1.100:51820	10.0.0.5/32	1701234567	1024	2048	0
-func (v *Valon) parseWgDump(output []byte) {
-	scanner := bufio.NewScanner(bytes.NewReader(output))
-	lineNum := 0
+// processPeer processes a single WireGuard peer and updates cache.
+func (v *Valon) processPeer(peer *wgtypes.Peer) {
+	// Convert public key to Base64 (standard WireGuard format)
+	pubkey := base64.StdEncoding.EncodeToString(peer.PublicKey[:])
 
-	for scanner.Scan() {
-		line := scanner.Text()
-		lineNum++
+	// Extract endpoint (NAT endpoint observed by WireGuard)
+	var endpoint string
+	if peer.Endpoint != nil {
+		endpoint = peer.Endpoint.String()
+	}
 
-		// Skip interface line (line 1)
-		if lineNum == 1 {
-			continue
-		}
+	// Extract WireGuard overlay IP from allowed IPs
+	wgIP := v.extractWgIP(peer.AllowedIPs)
 
-		fields := strings.Split(line, "\t")
-		if len(fields) < 8 {
-			log.Printf("[valon] Invalid wg dump line: %s", line)
-			continue
-		}
-
-		pubkey := fields[0]
-		endpoint := fields[2]
-		allowedIPs := fields[3]
-		handshakeStr := fields[4]
-
-		// Parse last handshake timestamp (Unix timestamp)
-		var lastHandshake time.Time
-		if handshakeStr != "0" {
-			if ts, err := strconv.ParseInt(handshakeStr, 10, 64); err == nil {
-				lastHandshake = time.Unix(ts, 0)
-			}
-		}
-
-		// Extract WireGuard overlay IP from allowed-ips
-		// Format: "10.0.0.5/32" or "10.0.0.5/32,10.0.1.0/24"
-		wgIP := v.extractFirstIP(allowedIPs)
-
-		// Update cache
-		v.cache.Update(pubkey, func(p *PeerInfo) {
-			p.PubKey = pubkey
+	// Update cache
+	v.cache.Update(pubkey, func(p *PeerInfo) {
+		p.PubKey = pubkey
+		if wgIP != "" {
 			p.WgIP = wgIP
-			p.LastHandshake = lastHandshake
-			p.UpdatedAt = time.Now()
+		}
+		p.LastHandshake = peer.LastHandshakeTime
+		p.UpdatedAt = time.Now()
 
-			// Update NAT endpoint from wg observation (no private IP check)
-			if endpoint != "(none)" && p.NATEndpoint != endpoint {
-				p.NATEndpoint = endpoint
-				p.dirty = true
-			}
-		})
-	}
-
-	if err := scanner.Err(); err != nil {
-		log.Printf("[valon] Error parsing wg dump: %v", err)
-	}
+		// Update NAT endpoint from wg observation
+		if endpoint != "" && p.NATEndpoint != endpoint {
+			p.NATEndpoint = endpoint
+			p.dirty = true
+		}
+	})
 }
 
-// extractFirstIP extracts the first IP address from allowed-ips.
-// Input: "10.0.0.5/32" or "10.0.0.5/32,10.0.1.0/24"
-// Output: "10.0.0.5"
-func (v *Valon) extractFirstIP(allowedIPs string) string {
-	if allowedIPs == "" {
-		return ""
+// extractWgIP extracts the first IPv4 address from allowed IPs.
+// This is typically the WireGuard overlay network IP.
+func (v *Valon) extractWgIP(allowedIPs []net.IPNet) string {
+	for _, ipNet := range allowedIPs {
+		// Prefer IPv4 addresses
+		if ip := ipNet.IP.To4(); ip != nil {
+			return ip.String()
+		}
 	}
-
-	// Split by comma (multiple ranges)
-	parts := strings.Split(allowedIPs, ",")
-	if len(parts) == 0 {
-		return ""
-	}
-
-	// Take first range and strip CIDR suffix
-	first := strings.TrimSpace(parts[0])
-	if idx := strings.Index(first, "/"); idx > 0 {
-		return first[:idx]
-	}
-
-	return first
+	return ""
 }

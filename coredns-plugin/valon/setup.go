@@ -2,6 +2,7 @@ package valon
 
 import (
 	"log"
+	"time"
 
 	"github.com/coredns/caddy"
 	"github.com/coredns/coredns/core/dnsserver"
@@ -50,6 +51,26 @@ func setup(c *caddy.Controller) error {
 					return c.ArgErr()
 				}
 				v.DdnsListen = c.Val()
+
+			case "wg_poll_interval":
+				if !c.NextArg() {
+					return c.ArgErr()
+				}
+				duration, err := time.ParseDuration(c.Val())
+				if err != nil {
+					return c.Errf("invalid wg_poll_interval: %v", err)
+				}
+				v.WgPollInterval = duration
+
+			case "etcd_sync_interval":
+				if !c.NextArg() {
+					return c.ArgErr()
+				}
+				duration, err := time.ParseDuration(c.Val())
+				if err != nil {
+					return c.Errf("invalid etcd_sync_interval: %v", err)
+				}
+				v.EtcdSyncInterval = duration
 
 			default:
 				return c.Errf("unknown property '%s'", c.Val())

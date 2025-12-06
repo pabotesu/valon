@@ -104,7 +104,8 @@ func (v *Valon) Init() error {
 	go v.startWgMonitor()
 	go v.startEtcdSync()
 
-	// TODO: Start DDNS HTTP server
+	// Start DDNS HTTP server
+	v.startDDNSServer()
 
 	log.Printf("[valon] Plugin initialized successfully")
 	return nil

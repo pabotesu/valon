@@ -6,14 +6,20 @@
 valon.internal:53 {
     # VALON plugin configuration
     valon {
-        # etcd endpoints (future use)
+        # etcd endpoints
         etcd_endpoints http://127.0.0.1:2379
         
-        # WireGuard interface to monitor (future use)
+        # WireGuard interface to monitor
         wg_interface wg0
         
-        # DDNS API listen address (future use)
-        ddns_listen 127.0.0.1:8080
+        # DDNS API listen address
+        ddns_listen 127.0.0.1:8053
+        
+        # WireGuard polling interval (default: 1s)
+        wg_poll_interval 1s
+        
+        # etcd sync interval (default: 10s)
+        etcd_sync_interval 10s
     }
     
     # Cache responses for 30 seconds

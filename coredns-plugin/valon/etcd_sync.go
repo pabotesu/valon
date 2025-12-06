@@ -82,6 +82,9 @@ func (v *Valon) writePeerToEtcd(pubkey string, peerInfo *PeerInfo) error {
 		ops = append(ops, clientv3.OpPut(key, peerInfo.NATEndpoint))
 	}
 
+	// Note: Alias is written separately in ddns.go when registered via API
+	// It's not part of the dirty sync because it doesn't change frequently
+
 	// Execute transaction
 	if len(ops) > 0 {
 		_, err := v.etcdClient.Txn(ctx).Then(ops...).Commit()

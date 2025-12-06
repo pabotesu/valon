@@ -4,9 +4,12 @@
 package valon
 
 import (
+	"context"
 	"log"
+	"time"
 
 	"github.com/coredns/coredns/plugin"
+	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
 // Valon is the main plugin structure.
@@ -20,6 +23,9 @@ type Valon struct {
 
 	// Zone
 	Zone string // DNS zone (e.g., "valon.internal.")
+
+	// Runtime
+	etcdClient *clientv3.Client // etcd client
 }
 
 // Name returns the plugin name.
@@ -35,7 +41,28 @@ func (v *Valon) Init() error {
 	log.Printf("[valon] WireGuard interface: %s", v.WgInterface)
 	log.Printf("[valon] DDNS listen: %s", v.DdnsListen)
 
-	// TODO: Initialize etcd client
+	// Initialize etcd client
+	cli, err := clientv3.New(clientv3.Config{
+		Endpoints:   v.EtcdEndpoints,
+		DialTimeout: 5 * time.Second,
+	})
+	if err != nil {
+		log.Printf("[valon] Failed to connect to etcd: %v", err)
+		return err
+	}
+	v.etcdClient = cli
+
+	// Test etcd connection
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	_, err = cli.Get(ctx, "/valon/health")
+	if err != nil {
+		log.Printf("[valon] Warning: etcd connection test failed: %v", err)
+		// Don't fail initialization - etcd might be empty
+	} else {
+		log.Printf("[valon] etcd connection successful")
+	}
+
 	// TODO: Initialize WireGuard monitor
 	// TODO: Start DDNS HTTP server
 

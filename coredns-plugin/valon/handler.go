@@ -7,7 +7,6 @@ import (
 	"net"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/coredns/coredns/plugin"
 	"github.com/coredns/coredns/request"
@@ -74,35 +73,33 @@ func (v Valon) handleA(ctx context.Context, w dns.ResponseWriter, r *dns.Msg, st
 		return v.nxdomain(w, r)
 	}
 
-	var etcdKey string
+	log.Printf("[valon] A query for: %s (label: %s, pubkey: %s)", state.Name(), dnsLabel, pubkey)
+
+	// Query cache
+	peerInfo := v.cache.Get(pubkey)
+	if peerInfo == nil {
+		log.Printf("[valon] No data found in cache for pubkey: %s", pubkey)
+		return v.nxdomain(w, r)
+	}
+
+	var value string
 	if isEndpoint {
 		if endpointType == "LAN" {
-			etcdKey = fmt.Sprintf("/valon/peers/%s/endpoints/lan", pubkey)
+			value = peerInfo.LANEndpoint
 		} else {
-			etcdKey = fmt.Sprintf("/valon/peers/%s/endpoints/nated", pubkey)
+			value = peerInfo.NATEndpoint
+		}
+		if value == "" {
+			log.Printf("[valon] %s endpoint not available for pubkey: %s", endpointType, pubkey)
+			return v.nxdomain(w, r)
 		}
 	} else {
-		etcdKey = fmt.Sprintf("/valon/peers/%s/wg_ip", pubkey)
+		value = peerInfo.WgIP
+		if value == "" {
+			log.Printf("[valon] WireGuard IP not available for pubkey: %s", pubkey)
+			return v.nxdomain(w, r)
+		}
 	}
-
-	log.Printf("[valon] A query for: %s (label: %s, pubkey: %s) -> etcd key: %s", state.Name(), dnsLabel, pubkey, etcdKey)
-
-	// Query etcd
-	ctxTimeout, cancel := context.WithTimeout(ctx, 2*time.Second)
-	defer cancel()
-
-	resp, err := v.etcdClient.Get(ctxTimeout, etcdKey)
-	if err != nil {
-		log.Printf("[valon] etcd query error: %v", err)
-		return v.nxdomain(w, r)
-	}
-
-	if len(resp.Kvs) == 0 {
-		log.Printf("[valon] No data found in etcd for key: %s", etcdKey)
-		return v.nxdomain(w, r)
-	}
-
-	value := string(resp.Kvs[0].Value)
 
 	var ip net.IP
 	if isEndpoint {
@@ -168,26 +165,16 @@ func (v Valon) handleSRV(ctx context.Context, w dns.ResponseWriter, r *dns.Msg, 
 
 	log.Printf("[valon] SRV query for label: %s (pubkey: %s)", dnsLabel, pubkey)
 
-	// Query etcd for both LAN and NAT endpoints
-	ctxTimeout, cancel := context.WithTimeout(ctx, 2*time.Second)
-	defer cancel()
-
-	lanKey := fmt.Sprintf("/valon/peers/%s/endpoints/lan", pubkey)
-	natedKey := fmt.Sprintf("/valon/peers/%s/endpoints/nated", pubkey)
-
-	lanResp, err := v.etcdClient.Get(ctxTimeout, lanKey)
-	if err != nil {
-		log.Printf("[valon] etcd query error for LAN endpoint: %v", err)
-	}
-
-	natedResp, err := v.etcdClient.Get(ctxTimeout, natedKey)
-	if err != nil {
-		log.Printf("[valon] etcd query error for NAT endpoint: %v", err)
+	// Query cache
+	peerInfo := v.cache.Get(pubkey)
+	if peerInfo == nil {
+		log.Printf("[valon] No data found in cache for pubkey: %s", pubkey)
+		return v.nxdomain(w, r)
 	}
 
 	// Process LAN endpoint
-	if len(lanResp.Kvs) > 0 {
-		endpoint := string(lanResp.Kvs[0].Value)
+	if peerInfo.LANEndpoint != "" {
+		endpoint := peerInfo.LANEndpoint
 		host, portStr, err := net.SplitHostPort(endpoint)
 		if err == nil {
 			port, _ := strconv.Atoi(portStr)
@@ -226,8 +213,8 @@ func (v Valon) handleSRV(ctx context.Context, w dns.ResponseWriter, r *dns.Msg, 
 	}
 
 	// Process NAT endpoint
-	if len(natedResp.Kvs) > 0 {
-		endpoint := string(natedResp.Kvs[0].Value)
+	if peerInfo.NATEndpoint != "" {
+		endpoint := peerInfo.NATEndpoint
 		host, portStr, err := net.SplitHostPort(endpoint)
 		if err == nil {
 			port, _ := strconv.Atoi(portStr)

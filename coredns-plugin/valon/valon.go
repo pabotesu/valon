@@ -5,7 +5,11 @@ package valon
 
 import (
 	"context"
+	"fmt"
 	"log"
+	"net"
+	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/coredns/coredns/plugin"
@@ -17,15 +21,19 @@ type Valon struct {
 	Next plugin.Handler // Next plugin in the chain
 
 	// Configuration (from Corefile)
-	EtcdEndpoints []string // etcd endpoints
-	WgInterface   string   // WireGuard interface name
-	DdnsListen    string   // DDNS API listen address
+	EtcdEndpoints    []string      // etcd endpoints
+	WgInterface      string        // WireGuard interface name
+	DdnsListen       string        // DDNS API listen address
+	WgPollInterval   time.Duration // WireGuard polling interval (default: 1s)
+	EtcdSyncInterval time.Duration // etcd sync interval (default: 10s)
 
 	// Zone
 	Zone string // DNS zone (e.g., "valon.internal.")
 
 	// Runtime
 	etcdClient *clientv3.Client // etcd client
+	cache      *PeerCache       // in-memory peer cache
+	// stopCh     chan struct{}    // stop signal for background goroutines (TODO: Phase 3/4)
 }
 
 // Name returns the plugin name.
@@ -63,7 +71,37 @@ func (v *Valon) Init() error {
 		log.Printf("[valon] etcd connection successful")
 	}
 
-	// TODO: Initialize WireGuard monitor
+	// Initialize memory cache
+	v.cache = NewPeerCache()
+	log.Printf("[valon] Memory cache initialized")
+
+	// Load initial data from etcd
+	if err := v.loadFromEtcd(); err != nil {
+		log.Printf("[valon] Warning: failed to load from etcd: %v", err)
+	}
+
+	// Register self (Discovery Role's own peer info)
+	if err := v.registerSelf(); err != nil {
+		log.Printf("[valon] Failed to register self: %v", err)
+		return fmt.Errorf("failed to register self: %w", err)
+	}
+
+	// Set default intervals if not configured
+	if v.WgPollInterval == 0 {
+		v.WgPollInterval = 1 * time.Second
+	}
+	if v.EtcdSyncInterval == 0 {
+		v.EtcdSyncInterval = 10 * time.Second
+	}
+
+	log.Printf("[valon] WireGuard poll interval: %v", v.WgPollInterval)
+	log.Printf("[valon] etcd sync interval: %v", v.EtcdSyncInterval)
+
+	// TODO: Start background monitors
+	// v.stopCh = make(chan struct{})
+	// go v.wgMonitor()
+	// go v.etcdSyncer()
+
 	// TODO: Start DDNS HTTP server
 
 	log.Printf("[valon] Plugin initialized successfully")
@@ -74,4 +112,139 @@ func (v *Valon) Init() error {
 func (v Valon) Ready() bool {
 	// TODO: Check etcd connection, WireGuard interface, etc.
 	return true
+}
+
+// loadFromEtcd loads all peer data from etcd into memory cache.
+func (v *Valon) loadFromEtcd() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Get all keys under /valon/peers/
+	resp, err := v.etcdClient.Get(ctx, "/valon/peers/", clientv3.WithPrefix())
+	if err != nil {
+		return fmt.Errorf("etcd get failed: %w", err)
+	}
+
+	if len(resp.Kvs) == 0 {
+		log.Printf("[valon] No peers found in etcd")
+		return nil
+	}
+
+	// Parse keys and group by pubkey
+	peers := make(map[string]*PeerInfo)
+
+	for _, kv := range resp.Kvs {
+		key := string(kv.Key)
+		value := string(kv.Value)
+
+		// Parse key: /valon/peers/<pubkey>/wg_ip or /valon/peers/<pubkey>/endpoints/lan
+		parts := strings.Split(strings.TrimPrefix(key, "/valon/peers/"), "/")
+		if len(parts) < 2 {
+			continue
+		}
+
+		pubkey := parts[0]
+		field := parts[1]
+
+		if peers[pubkey] == nil {
+			peers[pubkey] = &PeerInfo{
+				PubKey: pubkey,
+			}
+		}
+
+		switch field {
+		case "wg_ip":
+			peers[pubkey].WgIP = value
+		case "endpoints":
+			if len(parts) >= 3 {
+				endpointType := parts[2]
+				if endpointType == "lan" {
+					peers[pubkey].LANEndpoint = value
+				} else if endpointType == "nated" {
+					peers[pubkey].NATEndpoint = value
+				}
+			}
+		}
+	}
+
+	// Load into cache
+	for pubkey, peer := range peers {
+		v.cache.Set(pubkey, peer)
+	}
+
+	log.Printf("[valon] Loaded %d peers from etcd into cache", v.cache.Count())
+	return nil
+}
+
+// registerSelf registers this node's WireGuard peer information.
+// It verifies WireGuard interface existence and extracts public key and IP.
+// Returns error if WireGuard interface is not found (plugin initialization will fail).
+func (v *Valon) registerSelf() error {
+	if v.WgInterface == "" {
+		return fmt.Errorf("WireGuard interface not configured")
+	}
+
+	// Check if WireGuard interface exists
+	_, err := net.InterfaceByName(v.WgInterface)
+	if err != nil {
+		return fmt.Errorf("WireGuard interface %s not found: %w", v.WgInterface, err)
+	}
+
+	// Get own public key using: wg show <interface> public-key
+	pubkey, err := v.getOwnPublicKey()
+	if err != nil {
+		return fmt.Errorf("failed to get public key: %w", err)
+	}
+
+	// Get own WireGuard IP
+	wgIP, err := v.getOwnWireGuardIP()
+	if err != nil {
+		return fmt.Errorf("failed to get WireGuard IP: %w", err)
+	}
+
+	// Register to cache
+	selfInfo := &PeerInfo{
+		PubKey:    pubkey,
+		WgIP:      wgIP,
+		UpdatedAt: time.Now(),
+		dirty:     true, // Needs sync to etcd
+	}
+
+	v.cache.Set(pubkey, selfInfo)
+	log.Printf("[valon] Registered self: pubkey=%s, wgIP=%s", pubkey, wgIP)
+
+	return nil
+}
+
+// getOwnPublicKey retrieves this node's WireGuard public key.
+func (v *Valon) getOwnPublicKey() (string, error) {
+	cmd := exec.Command("wg", "show", v.WgInterface, "public-key")
+	output, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("wg show public-key failed: %w", err)
+	}
+	return strings.TrimSpace(string(output)), nil
+}
+
+// getOwnWireGuardIP retrieves this node's WireGuard interface IP address.
+func (v *Valon) getOwnWireGuardIP() (string, error) {
+	iface, err := net.InterfaceByName(v.WgInterface)
+	if err != nil {
+		return "", err
+	}
+
+	addrs, err := iface.Addrs()
+	if err != nil {
+		return "", err
+	}
+
+	for _, addr := range addrs {
+		if ipnet, ok := addr.(*net.IPNet); ok {
+			if ipnet.IP.To4() != nil {
+				return ipnet.IP.String(), nil
+			}
+		}
+	}
+
+	return "", fmt.Errorf("no IPv4 address found on interface %s", v.WgInterface)
 }

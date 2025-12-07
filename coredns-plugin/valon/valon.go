@@ -152,14 +152,15 @@ func (v *Valon) loadFromEtcd() error {
 		// Note: pubkey may contain "/" characters in base64 encoding
 		relKey := strings.TrimPrefix(key, "/valon/peers/")
 
-		// Find first "/" to separate pubkey from field path
-		firstSlash := strings.Index(relKey, "/")
-		if firstSlash == -1 {
+		// Find last "/" to separate pubkey from field path
+		// (pubkey contains "/" so we need the last one)
+		lastSlash := strings.LastIndex(relKey, "/")
+		if lastSlash == -1 {
 			continue
 		}
 
-		pubkey := relKey[:firstSlash]
-		fieldPath := relKey[firstSlash+1:]
+		pubkey := relKey[:lastSlash]
+		fieldPath := relKey[lastSlash+1:]
 
 		// Parse field path (e.g., "wg_ip" or "endpoints/lan")
 		fieldParts := strings.Split(fieldPath, "/")

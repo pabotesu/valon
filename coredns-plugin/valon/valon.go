@@ -149,13 +149,23 @@ func (v *Valon) loadFromEtcd() error {
 		value := string(kv.Value)
 
 		// Parse key: /valon/peers/<pubkey>/wg_ip or /valon/peers/<pubkey>/endpoints/lan
-		parts := strings.Split(strings.TrimPrefix(key, "/valon/peers/"), "/")
-		if len(parts) < 2 {
+		// Note: pubkey may contain "/" characters in base64 encoding
+		relKey := strings.TrimPrefix(key, "/valon/peers/")
+
+		// Find first "/" to separate pubkey from field path
+		firstSlash := strings.Index(relKey, "/")
+		if firstSlash == -1 {
 			continue
 		}
 
-		pubkey := parts[0]
-		field := parts[1]
+		pubkey := relKey[:firstSlash]
+		fieldPath := relKey[firstSlash+1:]
+
+		// Parse field path (e.g., "wg_ip" or "endpoints/lan")
+		fieldParts := strings.Split(fieldPath, "/")
+		if len(fieldParts) == 0 {
+			continue
+		}
 
 		if peersByPubkey[pubkey] == nil {
 			peersByPubkey[pubkey] = &PeerInfo{
@@ -163,12 +173,12 @@ func (v *Valon) loadFromEtcd() error {
 			}
 		}
 
-		switch field {
+		switch fieldParts[0] {
 		case "wg_ip":
 			peersByPubkey[pubkey].WgIP = value
 		case "endpoints":
-			if len(parts) >= 3 {
-				endpointType := parts[2]
+			if len(fieldParts) >= 2 {
+				endpointType := fieldParts[1]
 				if endpointType == "lan" {
 					peersByPubkey[pubkey].LANEndpoint = value
 				} else if endpointType == "nated" {

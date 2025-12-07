@@ -417,7 +417,12 @@ func (v Valon) handleServiceDiscovery(ctx context.Context, w dns.ResponseWriter,
 			}
 		}
 
-		log.Printf("[valon] Added peer to service discovery: %s (IP: %s)", label[:16]+"...", peer.WgIP)
+		// Log with truncated label
+		truncLabel := label
+		if len(label) > 16 {
+			truncLabel = label[:16] + "..."
+		}
+		log.Printf("[valon] Added peer to service discovery: %s (IP: %s)", truncLabel, peer.WgIP)
 	}
 
 	log.Printf("[valon] Service discovery response: %d peers", len(m.Answer))

@@ -102,9 +102,9 @@ func (e *EtcdClient) AddPeer(ctx context.Context, peer *PeerInfo) error {
 		// Check alias doesn't already exist
 		clientv3.Compare(clientv3.Version(aliasKey), "=", 0),
 	).Then(
-		// Write peer info
+		// Write peer info (using wg_ip to match CoreDNS plugin)
 		clientv3.OpPut(path.Join(peerPrefix, "pubkey"), peer.Pubkey),
-		clientv3.OpPut(path.Join(peerPrefix, "ip"), peer.IP),
+		clientv3.OpPut(path.Join(peerPrefix, "wg_ip"), peer.IP),
 		clientv3.OpPut(path.Join(peerPrefix, "alias"), peer.Alias),
 		// Write alias reference
 		clientv3.OpPut(aliasKey, peer.Pubkey),
@@ -214,7 +214,7 @@ func (e *EtcdClient) ListPeers(ctx context.Context) ([]*PeerInfo, error) {
 		switch field {
 		case "pubkey":
 			peerMap[label].Pubkey = string(kv.Value)
-		case "ip":
+		case "wg_ip", "ip": // Support both wg_ip (CoreDNS) and ip (legacy)
 			peerMap[label].IP = string(kv.Value)
 		case "alias":
 			peerMap[label].Alias = string(kv.Value)

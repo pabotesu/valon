@@ -192,6 +192,7 @@ func (v *Valon) loadFromEtcd() error {
 	// Load into cache using pubkey as key
 	loaded := 0
 	for pubkey, peer := range peersByPubkey {
+		log.Printf("[valon] Loading peer into cache: pubkey=%s, wg_ip=%s", pubkey[:min(len(pubkey), 20)]+"...", peer.WgIP)
 		v.cache.Set(pubkey, peer)
 		loaded++
 	}

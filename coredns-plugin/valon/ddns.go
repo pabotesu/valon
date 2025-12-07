@@ -72,6 +72,13 @@ func (v *Valon) handleEndpointUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Access control: verify source IP
+	clientIP := extractClientIP(r)
+	if !v.isAuthorized(clientIP, req.PubKey) {
+		v.sendError(w, http.StatusForbidden, "Not authorized to modify this peer")
+		return
+	}
+
 	// Validate LAN endpoint format (allow "0.0.0.0:0" for offline)
 	if req.LANEndpoint != "" {
 		if _, _, err := net.SplitHostPort(req.LANEndpoint); err != nil {
@@ -148,6 +155,13 @@ func (v *Valon) handleEndpointDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Access control: verify source IP
+	clientIP := extractClientIP(r)
+	if !v.isAuthorized(clientIP, req.PubKey) {
+		v.sendError(w, http.StatusForbidden, "Not authorized to delete this peer")
+		return
+	}
+
 	// Delete from cache
 	v.cache.Delete(req.PubKey)
 
@@ -161,6 +175,57 @@ func (v *Valon) handleEndpointDelete(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("[valon] DDNS: Peer %s deleted from cache and alias removed", req.PubKey)
 	v.sendSuccess(w, "Endpoint deleted successfully")
+}
+
+// extractClientIP extracts the client IP address from the HTTP request.
+func extractClientIP(r *http.Request) string {
+	// Try X-Forwarded-For header first (if behind proxy)
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		// Take the first IP in the list
+		if idx := len(xff); idx > 0 {
+			if commaIdx := 0; commaIdx < idx {
+				for i, c := range xff {
+					if c == ',' {
+						commaIdx = i
+						break
+					}
+				}
+				if commaIdx > 0 {
+					return xff[:commaIdx]
+				}
+			}
+			return xff
+		}
+	}
+
+	// Fall back to RemoteAddr
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
+}
+
+// isAuthorized checks if the client IP is authorized to modify the specified peer.
+// Returns true if:
+// 1. Client is Discovery Role (self.wgIP)
+// 2. Client is the peer itself (clientIP matches peer's WgIP)
+func (v *Valon) isAuthorized(clientIP, targetPubKey string) bool {
+	// Discovery Role can manage all peers
+	if clientIP == v.selfWgIP {
+		log.Printf("[valon] DDNS: Authorization granted for Discovery Role (%s)", clientIP)
+		return true
+	}
+
+	// Check if client is the peer itself
+	peer := v.cache.Get(targetPubKey)
+	if peer != nil && peer.WgIP == clientIP {
+		log.Printf("[valon] DDNS: Authorization granted for peer itself (%s)", clientIP)
+		return true
+	}
+
+	log.Printf("[valon] DDNS: Authorization denied - clientIP=%s, targetPubKey=%s", clientIP, targetPubKey[:16]+"...")
+	return false
 }
 
 // handleHealth handles GET /health

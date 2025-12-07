@@ -36,6 +36,7 @@ type Valon struct {
 	etcdClient *clientv3.Client // etcd client
 	cache      *PeerCache       // in-memory peer cache
 	stopCh     chan struct{}    // stop signal for background goroutines
+	selfWgIP   string           // own WireGuard IP (for authorization)
 }
 
 // Name returns the plugin name.
@@ -246,6 +247,7 @@ func (v *Valon) registerSelf() error {
 	}
 
 	v.cache.Set(pubkey, selfInfo)
+	v.selfWgIP = wgIP // Store for authorization checks
 	log.Printf("[valon] Registered self: pubkey=%s, wgIP=%s", pubkey, wgIP)
 
 	return nil

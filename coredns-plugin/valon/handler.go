@@ -147,17 +147,23 @@ func (v Valon) handleA(ctx context.Context, w dns.ResponseWriter, r *dns.Msg, st
 }
 
 // handleSRV handles SRV record queries.
-// Queries etcd for endpoint information and returns SRV records.
+// Supports both DNS-SD service discovery (_valon._tcp) and individual peer queries (_wireguard._udp.<label>).
 func (v Valon) handleSRV(ctx context.Context, w dns.ResponseWriter, r *dns.Msg, state request.Request) (int, error) {
 	m := new(dns.Msg)
 	m.SetReply(r)
 	m.Authoritative = true
 
 	// Extract DNS label from SRV query
-	// Format: _wireguard._udp.<base32-label>.valon.internal.
 	name := strings.TrimSuffix(state.Name(), v.Zone)
 	name = strings.TrimSuffix(name, ".")
 
+	// Check if this is a DNS-SD service discovery query
+	if name == "_valon._tcp" {
+		log.Printf("[valon] DNS-SD service discovery query: %s", state.Name())
+		return v.handleServiceDiscovery(ctx, w, r, state, m)
+	}
+
+	// Individual peer query: _wireguard._udp.<base32-label>.valon.internal.
 	if !strings.HasPrefix(name, "_wireguard._udp.") {
 		log.Printf("[valon] Invalid SRV query format: %s", state.Name())
 		return v.nxdomain(w, r)
@@ -351,6 +357,70 @@ func (v Valon) returnCNAME(ctx context.Context, w dns.ResponseWriter, r *dns.Msg
 	}
 
 	log.Printf("[valon] Returning CNAME: %s -> %s -> %s", state.Name(), targetFQDN, peerInfo.WgIP)
+	w.WriteMsg(m)
+	return dns.RcodeSuccess, nil
+}
+
+// handleServiceDiscovery handles DNS-SD queries for _valon._tcp
+// Returns SRV records for all peers in the cache
+func (v Valon) handleServiceDiscovery(ctx context.Context, w dns.ResponseWriter, r *dns.Msg, state request.Request, m *dns.Msg) (int, error) {
+	log.Printf("[valon] Service discovery: returning all peers")
+
+	// Get all peers from cache
+	peers := v.cache.GetAll()
+	if len(peers) == 0 {
+		log.Printf("[valon] No peers in cache for service discovery")
+		return v.nxdomain(w, r)
+	}
+
+	// Add SRV record for each peer
+	for _, peer := range peers {
+		// Generate DNS label from pubkey (base32 encoding)
+		label, err := pubkeyToDnsLabel(peer.PubKey)
+		if err != nil {
+			log.Printf("[valon] Failed to generate DNS label for peer %s: %v", peer.PubKey, err)
+			continue
+		}
+
+		// Target FQDN: <label>.valon.internal.
+		target := fmt.Sprintf("%s.%s", label, v.Zone)
+
+		// Create SRV record (priority=0, weight=0, port=0 for WireGuard overlay)
+		srv := &dns.SRV{
+			Hdr: dns.RR_Header{
+				Name:   state.Name(),
+				Rrtype: dns.TypeSRV,
+				Class:  dns.ClassINET,
+				Ttl:    30,
+			},
+			Priority: 0,
+			Weight:   0,
+			Port:     0, // WireGuard doesn't use traditional ports in DNS-SD
+			Target:   target,
+		}
+		m.Answer = append(m.Answer, srv)
+
+		// Add A record in Additional section
+		if peer.WgIP != "" {
+			ip := net.ParseIP(peer.WgIP)
+			if ip != nil {
+				a := &dns.A{
+					Hdr: dns.RR_Header{
+						Name:   target,
+						Rrtype: dns.TypeA,
+						Class:  dns.ClassINET,
+						Ttl:    30,
+					},
+					A: ip.To4(),
+				}
+				m.Extra = append(m.Extra, a)
+			}
+		}
+
+		log.Printf("[valon] Added peer to service discovery: %s (IP: %s)", label[:16]+"...", peer.WgIP)
+	}
+
+	log.Printf("[valon] Service discovery response: %d peers", len(m.Answer))
 	w.WriteMsg(m)
 	return dns.RcodeSuccess, nil
 }

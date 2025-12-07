@@ -49,25 +49,30 @@ func runPeerList(cmd *cobra.Command, args []string) error {
 
 	// Print table
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ALIAS\tPUBKEY (short)\tWG IP\tENDPOINT\tLAST SEEN")
-	fmt.Fprintln(w, "-----\t--------------\t-----\t--------\t---------")
+	fmt.Fprintln(w, "ALIAS\tPUBKEY (short)\tWG IP\tENDPOINT (LAN)\tENDPOINT (NAT)\tLAST SEEN")
+	fmt.Fprintln(w, "-----\t--------------\t-----\t---------------\t---------------\t---------")
 
 	for _, peer := range peers {
 		pubkeyShort := truncatePubkey(peer.Pubkey)
-		endpoint := peer.Endpoint
-		if endpoint == "" {
-			endpoint = "unknown"
-		} else if endpoint == "0.0.0.0:0" {
-			endpoint = "offline"
+
+		lanEndpoint := peer.LANEndpoint
+		if lanEndpoint == "" {
+			lanEndpoint = "-"
+		}
+
+		natEndpoint := peer.NATEndpoint
+		if natEndpoint == "" {
+			natEndpoint = "-"
 		}
 
 		lastSeen := formatLastSeen(peer.LastSeen)
 
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
 			peer.Alias,
 			pubkeyShort,
 			peer.IP,
-			endpoint,
+			lanEndpoint,
+			natEndpoint,
 			lastSeen,
 		)
 	}

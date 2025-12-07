@@ -30,11 +30,13 @@ type EtcdClient struct {
 
 // PeerInfo represents a peer's information stored in etcd
 type PeerInfo struct {
-	Pubkey   string // WireGuard public key (base64)
-	IP       string // WireGuard IP address
-	Alias    string // User-friendly alias name
-	Endpoint string // Last known endpoint (IP:port or 0.0.0.0:0 for offline)
-	LastSeen time.Time
+	Pubkey      string // WireGuard public key (base64)
+	IP          string // WireGuard IP address
+	Alias       string // User-friendly alias name
+	Endpoint    string // Last known endpoint (IP:port or 0.0.0.0:0 for offline) - deprecated, use LANEndpoint/NATEndpoint
+	LANEndpoint string // LAN endpoint from DDNS registration
+	NATEndpoint string // NAT endpoint from WireGuard observation
+	LastSeen    time.Time
 }
 
 // NewEtcdClient creates a new etcd client from configuration
@@ -228,7 +230,15 @@ func (e *EtcdClient) ListPeers(ctx context.Context) ([]*PeerInfo, error) {
 		case "endpoint":
 			peerMap[pubkey].Endpoint = string(kv.Value)
 		case "endpoints":
-			// endpoints/nated or endpoints/lan - store as Endpoint for now
+			if len(parts) >= 2 {
+				endpointType := parts[1]
+				if endpointType == "lan" {
+					peerMap[pubkey].LANEndpoint = string(kv.Value)
+				} else if endpointType == "nated" {
+					peerMap[pubkey].NATEndpoint = string(kv.Value)
+				}
+			}
+			// Also store in legacy Endpoint field for backward compatibility
 			if peerMap[pubkey].Endpoint == "" {
 				peerMap[pubkey].Endpoint = string(kv.Value)
 			}

@@ -152,19 +152,20 @@ func (v *Valon) loadFromEtcd() error {
 		// Note: pubkey may contain "/" characters in base64 encoding
 		relKey := strings.TrimPrefix(key, "/valon/peers/")
 
-		// Find last "/" to separate pubkey from field path
-		// (pubkey contains "/" so we need the last one)
-		lastSlash := strings.LastIndex(relKey, "/")
-		if lastSlash == -1 {
-			continue
-		}
+		// Find pubkey by looking for known field patterns
+		// Known fields: wg_ip, alias, endpoints/
+		var pubkey, fieldPath string
 
-		pubkey := relKey[:lastSlash]
-		fieldPath := relKey[lastSlash+1:]
-
-		// Parse field path (e.g., "wg_ip" or "endpoints/lan")
-		fieldParts := strings.Split(fieldPath, "/")
-		if len(fieldParts) == 0 {
+		if idx := strings.Index(relKey, "/wg_ip"); idx != -1 {
+			pubkey = relKey[:idx]
+			fieldPath = relKey[idx+1:]
+		} else if idx := strings.Index(relKey, "/alias"); idx != -1 {
+			pubkey = relKey[:idx]
+			fieldPath = relKey[idx+1:]
+		} else if idx := strings.Index(relKey, "/endpoints/"); idx != -1 {
+			pubkey = relKey[:idx]
+			fieldPath = relKey[idx+1:]
+		} else {
 			continue
 		}
 
@@ -172,6 +173,12 @@ func (v *Valon) loadFromEtcd() error {
 			peersByPubkey[pubkey] = &PeerInfo{
 				PubKey: pubkey, // Set pubkey from etcd key
 			}
+		}
+
+		// Parse field path (e.g., "wg_ip" or "endpoints/lan")
+		fieldParts := strings.Split(fieldPath, "/")
+		if len(fieldParts) == 0 {
+			continue
 		}
 
 		switch fieldParts[0] {

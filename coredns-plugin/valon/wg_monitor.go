@@ -1,11 +1,15 @@
 package valon
 
 import (
+	"context"
 	"encoding/base64"
+	"fmt"
 	"log"
 	"net"
+	"strings"
 	"time"
 
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"golang.zx2c4.com/wireguard/wgctrl"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 )
@@ -68,14 +72,20 @@ func (v *Valon) processPeer(peer *wgtypes.Peer) {
 	// Check if peer exists in cache
 	existing := v.cache.Get(pubkey)
 	if existing == nil {
-		// New peer detected but not registered via DDNS API
-		// Log for visibility, but don't auto-register (security by design)
-		if peer.LastHandshakeTime.After(time.Now().Add(-30 * time.Second)) {
-			// Only log if handshake is recent (avoid spam for old peers)
-			log.Printf("[valon] New peer detected: %s (wgIP: %s, endpoint: %s) - not in cache, awaiting DDNS registration",
-				pubkey[:16]+"...", wgIP, endpoint)
+		// New peer detected but not in cache
+		// Try to load from etcd (in case it was added via valonctl while CoreDNS was running)
+		if v.loadPeerFromEtcd(pubkey, wgIP) {
+			log.Printf("[valon] Loaded peer from etcd into cache: %s (wgIP: %s)", pubkey[:16]+"...", wgIP)
+			// Now update with NAT endpoint
+			existing = v.cache.Get(pubkey)
+		} else {
+			// Not in etcd either - awaiting DDNS registration
+			if peer.LastHandshakeTime.After(time.Now().Add(-30 * time.Second)) {
+				log.Printf("[valon] New peer detected: %s (wgIP: %s, endpoint: %s) - not in cache, awaiting DDNS registration",
+					pubkey[:16]+"...", wgIP, endpoint)
+			}
+			return
 		}
-		return
 	}
 
 	// Update cache
@@ -93,6 +103,46 @@ func (v *Valon) processPeer(peer *wgtypes.Peer) {
 			p.dirty = true
 		}
 	})
+}
+
+// loadPeerFromEtcd attempts to load a peer from etcd and add to cache.
+// Returns true if peer was found and loaded, false otherwise.
+func (v *Valon) loadPeerFromEtcd(pubkey, wgIP string) bool {
+	ctx := context.Background()
+	peerPrefix := fmt.Sprintf("/valon/peers/%s/", pubkey)
+
+	resp, err := v.etcdClient.Get(ctx, peerPrefix, clientv3.WithPrefix())
+	if err != nil {
+		log.Printf("[valon] Failed to query etcd for peer %s: %v", pubkey[:16]+"...", err)
+		return false
+	}
+
+	if len(resp.Kvs) == 0 {
+		return false // Not in etcd
+	}
+
+	// Parse peer data from etcd keys
+	peer := &PeerInfo{
+		PubKey: pubkey,
+		WgIP:   wgIP,
+	}
+
+	for _, kv := range resp.Kvs {
+		key := string(kv.Key)
+		value := string(kv.Value)
+
+		if strings.HasSuffix(key, "/wg_ip") {
+			peer.WgIP = value
+		} else if strings.HasSuffix(key, "/endpoints/lan") {
+			peer.LANEndpoint = value
+		} else if strings.HasSuffix(key, "/endpoints/nated") {
+			peer.NATEndpoint = value
+		}
+	}
+
+	// Add to cache
+	v.cache.Set(pubkey, peer)
+	return true
 }
 
 // extractWgIP extracts the first IPv4 address from allowed IPs.

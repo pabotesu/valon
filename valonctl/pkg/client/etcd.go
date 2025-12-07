@@ -13,7 +13,6 @@ import (
 	clientv3 "go.etcd.io/etcd/client/v3"
 
 	"github.com/pabotesu/valon/valonctl/pkg/config"
-	"github.com/pabotesu/valon/valonctl/pkg/encoding"
 )
 
 const (
@@ -88,13 +87,8 @@ func (e *EtcdClient) AddPeer(ctx context.Context, peer *PeerInfo) error {
 		return fmt.Errorf("alias is required")
 	}
 
-	// Generate DNS label from pubkey
-	label, err := encoding.PubkeyToLabel(peer.Pubkey)
-	if err != nil {
-		return fmt.Errorf("failed to generate label: %w", err)
-	}
-
-	peerPrefix := path.Join(EtcdKeyPrefix, "peers", label)
+	// Use base64 pubkey directly as etcd key
+	peerPrefix := path.Join(EtcdKeyPrefix, "peers", peer.Pubkey)
 	aliasKey := path.Join(EtcdKeyPrefix, "aliases", peer.Alias)
 
 	// Use transaction to ensure atomic dual write
@@ -102,8 +96,7 @@ func (e *EtcdClient) AddPeer(ctx context.Context, peer *PeerInfo) error {
 		// Check alias doesn't already exist
 		clientv3.Compare(clientv3.Version(aliasKey), "=", 0),
 	).Then(
-		// Write peer info (using wg_ip to match CoreDNS plugin)
-		clientv3.OpPut(path.Join(peerPrefix, "pubkey"), peer.Pubkey),
+		// Write peer info (wg_ip is the primary field)
 		clientv3.OpPut(path.Join(peerPrefix, "wg_ip"), peer.IP),
 		clientv3.OpPut(path.Join(peerPrefix, "alias"), peer.Alias),
 		// Write alias reference
@@ -125,19 +118,15 @@ func (e *EtcdClient) AddPeer(ctx context.Context, peer *PeerInfo) error {
 // RemovePeer removes a peer from etcd by pubkey or alias
 func (e *EtcdClient) RemovePeer(ctx context.Context, pubkeyOrAlias string) error {
 	// Try to detect if it's a pubkey (base64) or alias
-	var label string
+	var pubkey string
 	var alias string
 
 	if strings.Contains(pubkeyOrAlias, "+") || strings.Contains(pubkeyOrAlias, "/") || strings.HasSuffix(pubkeyOrAlias, "=") {
 		// Looks like a base64 pubkey
-		var err error
-		label, err = encoding.PubkeyToLabel(pubkeyOrAlias)
-		if err != nil {
-			return fmt.Errorf("invalid pubkey: %w", err)
-		}
+		pubkey = pubkeyOrAlias
 
 		// Get alias from etcd
-		peerPrefix := path.Join(EtcdKeyPrefix, "peers", label)
+		peerPrefix := path.Join(EtcdKeyPrefix, "peers", pubkey)
 		resp, err := e.client.Get(ctx, path.Join(peerPrefix, "alias"))
 		if err != nil {
 			return fmt.Errorf("failed to get alias: %w", err)
@@ -160,14 +149,10 @@ func (e *EtcdClient) RemovePeer(ctx context.Context, pubkeyOrAlias string) error
 			return fmt.Errorf("alias %q not found", alias)
 		}
 
-		pubkey := string(resp.Kvs[0].Value)
-		label, err = encoding.PubkeyToLabel(pubkey)
-		if err != nil {
-			return fmt.Errorf("failed to generate label: %w", err)
-		}
+		pubkey = string(resp.Kvs[0].Value)
 	}
 
-	peerPrefix := path.Join(EtcdKeyPrefix, "peers", label)
+	peerPrefix := path.Join(EtcdKeyPrefix, "peers", pubkey)
 	aliasKey := path.Join(EtcdKeyPrefix, "aliases", alias)
 
 	// Delete peer info and alias reference
@@ -197,32 +182,32 @@ func (e *EtcdClient) ListPeers(ctx context.Context) ([]*PeerInfo, error) {
 
 	for _, kv := range resp.Kvs {
 		keyStr := string(kv.Key)
-		// Remove prefix to get: <label>/field
+		// Remove prefix to get: <pubkey>/field
 		relKey := strings.TrimPrefix(keyStr, prefix)
 		parts := strings.SplitN(relKey, "/", 2)
 		if len(parts) != 2 {
 			continue
 		}
 
-		label := parts[0]
+		pubkey := parts[0]
 		field := parts[1]
 
-		if _, exists := peerMap[label]; !exists {
-			peerMap[label] = &PeerInfo{}
+		if _, exists := peerMap[pubkey]; !exists {
+			peerMap[pubkey] = &PeerInfo{
+				Pubkey: pubkey, // Set pubkey from etcd key
+			}
 		}
 
 		switch field {
-		case "pubkey":
-			peerMap[label].Pubkey = string(kv.Value)
-		case "wg_ip", "ip": // Support both wg_ip (CoreDNS) and ip (legacy)
-			peerMap[label].IP = string(kv.Value)
+		case "wg_ip", "ip": // Support both wg_ip and ip (legacy)
+			peerMap[pubkey].IP = string(kv.Value)
 		case "alias":
-			peerMap[label].Alias = string(kv.Value)
+			peerMap[pubkey].Alias = string(kv.Value)
 		case "endpoint":
-			peerMap[label].Endpoint = string(kv.Value)
+			peerMap[pubkey].Endpoint = string(kv.Value)
 		case "last_seen":
 			if t, err := time.Parse(time.RFC3339, string(kv.Value)); err == nil {
-				peerMap[label].LastSeen = t
+				peerMap[pubkey].LastSeen = t
 			}
 		}
 	}

@@ -142,7 +142,7 @@ func (v *Valon) loadFromEtcd() error {
 	}
 
 	// Parse keys and group by pubkey
-	peers := make(map[string]*PeerInfo)
+	peersByPubkey := make(map[string]*PeerInfo)
 
 	for _, kv := range resp.Kvs {
 		key := string(kv.Key)
@@ -157,33 +157,35 @@ func (v *Valon) loadFromEtcd() error {
 		pubkey := parts[0]
 		field := parts[1]
 
-		if peers[pubkey] == nil {
-			peers[pubkey] = &PeerInfo{
-				PubKey: pubkey,
+		if peersByPubkey[pubkey] == nil {
+			peersByPubkey[pubkey] = &PeerInfo{
+				PubKey: pubkey, // Set pubkey from etcd key
 			}
 		}
 
 		switch field {
 		case "wg_ip":
-			peers[pubkey].WgIP = value
+			peersByPubkey[pubkey].WgIP = value
 		case "endpoints":
 			if len(parts) >= 3 {
 				endpointType := parts[2]
 				if endpointType == "lan" {
-					peers[pubkey].LANEndpoint = value
+					peersByPubkey[pubkey].LANEndpoint = value
 				} else if endpointType == "nated" {
-					peers[pubkey].NATEndpoint = value
+					peersByPubkey[pubkey].NATEndpoint = value
 				}
 			}
 		}
 	}
 
-	// Load into cache
-	for pubkey, peer := range peers {
+	// Load into cache using pubkey as key
+	loaded := 0
+	for pubkey, peer := range peersByPubkey {
 		v.cache.Set(pubkey, peer)
+		loaded++
 	}
 
-	log.Printf("[valon] Loaded %d peers from etcd into cache", v.cache.Count())
+	log.Printf("[valon] Loaded %d peers from etcd into cache", loaded)
 	return nil
 }
 

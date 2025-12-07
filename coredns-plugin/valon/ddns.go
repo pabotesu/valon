@@ -103,13 +103,13 @@ func (v *Valon) handleEndpointUpdate(w http.ResponseWriter, r *http.Request) {
 		} else {
 			ctx := r.Context()
 
-			// Write CNAME alias mapping: alias -> Base32 label
+			// Write alias mapping: alias -> Base64 pubkey (not base32 label)
 			aliasKey := fmt.Sprintf("/valon/aliases/%s", req.Alias)
-			_, err = v.etcdClient.Put(ctx, aliasKey, dnsLabel)
+			_, err = v.etcdClient.Put(ctx, aliasKey, req.PubKey)
 			if err != nil {
 				log.Printf("[valon] DDNS: Failed to register alias to etcd: %v", err)
 			} else {
-				log.Printf("[valon] DDNS: Registered alias %s -> %s", req.Alias, dnsLabel)
+				log.Printf("[valon] DDNS: Registered alias %s -> %s (DNS label: %s)", req.Alias, req.PubKey[:20]+"...", dnsLabel)
 			}
 
 			// Write reverse mapping: pubkey -> alias (for management)

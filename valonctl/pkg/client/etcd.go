@@ -182,18 +182,31 @@ func (e *EtcdClient) ListPeers(ctx context.Context) ([]*PeerInfo, error) {
 
 	for _, kv := range resp.Kvs {
 		keyStr := string(kv.Key)
-		// Remove prefix to get: <pubkey>/field
+		// Remove prefix to get: <pubkey>/field or <pubkey>/endpoints/type
 		relKey := strings.TrimPrefix(keyStr, prefix)
 
-		// Find the last "/" to separate pubkey from field
-		// (pubkey may contain "/" characters in base64)
-		lastSlash := strings.LastIndex(relKey, "/")
-		if lastSlash == -1 {
+		// Find pubkey by looking for known field patterns
+		// Known fields: wg_ip, ip, alias, endpoint, endpoints/, last_seen
+		var pubkey, fieldPath string
+
+		if idx := strings.Index(relKey, "/wg_ip"); idx != -1 {
+			pubkey = relKey[:idx]
+			fieldPath = relKey[idx+1:]
+		} else if idx := strings.Index(relKey, "/ip"); idx != -1 && !strings.Contains(relKey[idx:], "/wg_ip") {
+			pubkey = relKey[:idx]
+			fieldPath = relKey[idx+1:]
+		} else if idx := strings.Index(relKey, "/alias"); idx != -1 {
+			pubkey = relKey[:idx]
+			fieldPath = relKey[idx+1:]
+		} else if idx := strings.Index(relKey, "/endpoint"); idx != -1 {
+			pubkey = relKey[:idx]
+			fieldPath = relKey[idx+1:]
+		} else if idx := strings.Index(relKey, "/last_seen"); idx != -1 {
+			pubkey = relKey[:idx]
+			fieldPath = relKey[idx+1:]
+		} else {
 			continue
 		}
-
-		pubkey := relKey[:lastSlash]
-		field := relKey[lastSlash+1:]
 
 		if _, exists := peerMap[pubkey]; !exists {
 			peerMap[pubkey] = &PeerInfo{
@@ -201,13 +214,24 @@ func (e *EtcdClient) ListPeers(ctx context.Context) ([]*PeerInfo, error) {
 			}
 		}
 
-		switch field {
+		// Parse field path
+		parts := strings.Split(fieldPath, "/")
+		if len(parts) == 0 {
+			continue
+		}
+
+		switch parts[0] {
 		case "wg_ip", "ip": // Support both wg_ip and ip (legacy)
 			peerMap[pubkey].IP = string(kv.Value)
 		case "alias":
 			peerMap[pubkey].Alias = string(kv.Value)
 		case "endpoint":
 			peerMap[pubkey].Endpoint = string(kv.Value)
+		case "endpoints":
+			// endpoints/nated or endpoints/lan - store as Endpoint for now
+			if peerMap[pubkey].Endpoint == "" {
+				peerMap[pubkey].Endpoint = string(kv.Value)
+			}
 		case "last_seen":
 			if t, err := time.Parse(time.RFC3339, string(kv.Value)); err == nil {
 				peerMap[pubkey].LastSeen = t

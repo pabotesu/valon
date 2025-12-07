@@ -1,8 +1,5 @@
 FROM quay.io/coreos/etcd:v3.5.17
 
-# etcdデータディレクトリ
-ENV ETCD_DATA_DIR=/etcd-data
-
 # ボリュームマウントポイント
 VOLUME ["/etcd-data"]
 

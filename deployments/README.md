@@ -19,10 +19,10 @@ podman --version
 cd deployments
 
 # イメージビルド
-podman build -t valon-etcd:latest .
+sudo podman build -t valon-etcd:latest .
 
-# コンテナ起動（ボリュームは自動作成される）
-podman run -d \
+# コンテナ起動(ボリュームは自動作成される)
+sudo podman run -d \
   --name valon-etcd \
   -p 2379:2379 \
   -p 2380:2380 \
@@ -36,24 +36,24 @@ podman run -d \
 
 ```bash
 # コンテナ状態確認
-podman ps
+sudo podman ps
 
 # etcd health check
-podman exec valon-etcd etcdctl endpoint health
+sudo podman exec valon-etcd etcdctl endpoint health
 
 # ログ確認
-podman logs valon-etcd
+sudo podman logs valon-etcd
 ```
 
 ### etcd停止
 
 ```bash
 # コンテナ停止・削除
-podman stop valon-etcd
-podman rm valon-etcd
+sudo podman stop valon-etcd
+sudo podman rm valon-etcd
 
 # データボリューム削除も含める場合
-podman volume rm valon-etcd-data
+sudo podman volume rm valon-etcd-data
 ```
 
 ## etcd 接続情報
@@ -78,10 +78,10 @@ etcdのデータは名前付きボリューム `valon-etcd-data` に保存され
 
 ```bash
 # ボリューム確認
-podman volume ls
+sudo podman volume ls
 
 # ボリューム詳細
-podman volume inspect valon-etcd-data
+sudo podman volume inspect valon-etcd-data
 ```
 
 ## トラブルシューティング
@@ -96,12 +96,12 @@ lsof -i :2380
 
 ### コンテナログ確認
 ```bash
-podman logs -f valon-etcd
+sudo podman logs -f valon-etcd
 ```
 
 ### etcdctl直接実行
 ```bash
-podman exec -it valon-etcd etcdctl \
+sudo podman exec -it valon-etcd etcdctl \
   --endpoints=http://localhost:2379 \
   member list
 ```

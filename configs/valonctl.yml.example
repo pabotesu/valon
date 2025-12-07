@@ -1,0 +1,21 @@
+# VALON Control Configuration
+# This file configures valonctl for managing VALON peers
+
+wireguard:
+  # WireGuard interface name to manage
+  interface: wg0
+
+etcd:
+  # etcd endpoints for peer registry
+  endpoints:
+    - https://localhost:2379
+  
+  # Optional TLS configuration for etcd
+  # tls:
+  #   ca_cert: /path/to/ca.crt
+  #   client_cert: /path/to/client.crt
+  #   client_key: /path/to/client.key
+
+ddns:
+  # CoreDNS DDNS API endpoint for health checks
+  api_url: http://localhost:8053

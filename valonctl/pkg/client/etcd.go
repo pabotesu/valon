@@ -184,13 +184,16 @@ func (e *EtcdClient) ListPeers(ctx context.Context) ([]*PeerInfo, error) {
 		keyStr := string(kv.Key)
 		// Remove prefix to get: <pubkey>/field
 		relKey := strings.TrimPrefix(keyStr, prefix)
-		parts := strings.SplitN(relKey, "/", 2)
-		if len(parts) != 2 {
+
+		// Find the last "/" to separate pubkey from field
+		// (pubkey may contain "/" characters in base64)
+		lastSlash := strings.LastIndex(relKey, "/")
+		if lastSlash == -1 {
 			continue
 		}
 
-		pubkey := parts[0]
-		field := parts[1]
+		pubkey := relKey[:lastSlash]
+		field := relKey[lastSlash+1:]
 
 		if _, exists := peerMap[pubkey]; !exists {
 			peerMap[pubkey] = &PeerInfo{

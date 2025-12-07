@@ -1,6 +1,7 @@
 package valon
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -125,7 +126,7 @@ func (v *Valon) handleEndpointUpdate(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleEndpointDelete handles DELETE /api/endpoint/delete
-// Marks a peer as offline by setting endpoint to "0.0.0.0:0".
+// Removes peer from cache and deletes alias from etcd.
 func (v *Valon) handleEndpointDelete(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodDelete && r.Method != http.MethodPost {
 		v.sendError(w, http.StatusMethodNotAllowed, "Method not allowed")
@@ -147,15 +148,18 @@ func (v *Valon) handleEndpointDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Update cache: set endpoint to "0.0.0.0:0" (offline marker)
-	v.cache.Update(req.PubKey, func(p *PeerInfo) {
-		p.PubKey = req.PubKey
-		p.LANEndpoint = "0.0.0.0:0"
-		p.dirty = true
-		p.UpdatedAt = time.Now()
-	})
+	// Delete from cache
+	v.cache.Delete(req.PubKey)
 
-	log.Printf("[valon] DDNS: Peer %s endpoint deleted (marked offline)", req.PubKey)
+	// Delete alias from etcd
+	ctx := context.Background()
+	aliasKey := fmt.Sprintf("/valon/aliases/%s", req.PubKey)
+	_, err := v.etcdClient.Delete(ctx, aliasKey)
+	if err != nil {
+		log.Printf("[valon] DDNS: Failed to delete alias for %s: %v", req.PubKey, err)
+	}
+
+	log.Printf("[valon] DDNS: Peer %s deleted from cache and alias removed", req.PubKey)
 	v.sendSuccess(w, "Endpoint deleted successfully")
 }
 

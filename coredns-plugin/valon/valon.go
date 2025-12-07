@@ -144,6 +144,8 @@ func (v *Valon) loadFromEtcd() error {
 	// Parse keys and group by pubkey
 	peersByPubkey := make(map[string]*PeerInfo)
 
+	log.Printf("[valon] Loading peers from etcd: found %d keys", len(resp.Kvs))
+
 	for _, kv := range resp.Kvs {
 		key := string(kv.Key)
 		value := string(kv.Value)
@@ -166,6 +168,7 @@ func (v *Valon) loadFromEtcd() error {
 			pubkey = relKey[:idx]
 			fieldPath = relKey[idx+1:]
 		} else {
+			log.Printf("[valon] Skipping unrecognized key: %s", key)
 			continue
 		}
 

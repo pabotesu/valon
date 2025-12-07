@@ -1,10 +1,14 @@
 package client
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"fmt"
+	"log"
+	"net/http"
 	"os"
 	"path"
 	"strings"
@@ -25,7 +29,8 @@ const (
 
 // EtcdClient wraps etcd client for VALON-specific operations
 type EtcdClient struct {
-	client *clientv3.Client
+	client       *clientv3.Client
+	ddnsEndpoint string // DDNS API endpoint (e.g., "http://localhost:8053")
 }
 
 // PeerInfo represents a peer's information stored in etcd
@@ -40,7 +45,7 @@ type PeerInfo struct {
 }
 
 // NewEtcdClient creates a new etcd client from configuration
-func NewEtcdClient(cfg *config.EtcdConfig) (*EtcdClient, error) {
+func NewEtcdClient(cfg *config.EtcdConfig, ddnsCfg *config.DDNSConfig) (*EtcdClient, error) {
 	clientCfg := clientv3.Config{
 		Endpoints:   cfg.Endpoints,
 		DialTimeout: DefaultDialTimeout,
@@ -60,7 +65,15 @@ func NewEtcdClient(cfg *config.EtcdConfig) (*EtcdClient, error) {
 		return nil, fmt.Errorf("failed to create etcd client: %w", err)
 	}
 
-	return &EtcdClient{client: client}, nil
+	ddnsEndpoint := ""
+	if ddnsCfg != nil {
+		ddnsEndpoint = ddnsCfg.APIURL
+	}
+
+	return &EtcdClient{
+		client:       client,
+		ddnsEndpoint: ddnsEndpoint,
+	}, nil
 }
 
 // Close closes the etcd client connection
@@ -157,17 +170,58 @@ func (e *EtcdClient) RemovePeer(ctx context.Context, pubkeyOrAlias string) error
 	peerPrefix := path.Join(EtcdKeyPrefix, "peers", pubkey)
 	aliasKey := path.Join(EtcdKeyPrefix, "aliases", alias)
 
-	// Delete peer info and alias reference
-	_, err := e.client.Delete(ctx, peerPrefix, clientv3.WithPrefix())
+	// Call DDNS API to delete from cache (if endpoint configured)
+	if e.ddnsEndpoint != "" {
+		if err := e.callDDNSDelete(ctx, pubkey); err != nil {
+			log.Printf("Warning: Failed to call DDNS delete API: %v", err)
+			// Continue anyway - we'll delete from etcd
+		}
+	}
+
+	// Delete peer info and alias reference from etcd
+	delResp, err := e.client.Delete(ctx, peerPrefix, clientv3.WithPrefix())
 	if err != nil {
 		return fmt.Errorf("failed to delete peer: %w", err)
 	}
+	log.Printf("Deleted %d peer keys with prefix %s", delResp.Deleted, peerPrefix)
 
-	_, err = e.client.Delete(ctx, aliasKey)
+	delResp, err = e.client.Delete(ctx, aliasKey)
 	if err != nil {
 		return fmt.Errorf("failed to delete alias: %w", err)
 	}
+	log.Printf("Deleted %d alias keys: %s", delResp.Deleted, aliasKey)
 
+	return nil
+}
+
+// callDDNSDelete calls the DDNS API to delete a peer from CoreDNS cache
+func (e *EtcdClient) callDDNSDelete(ctx context.Context, pubkey string) error {
+	url := fmt.Sprintf("%s/api/endpoint/delete", e.ddnsEndpoint)
+
+	reqBody := map[string]string{"pubkey": pubkey}
+	jsonData, err := json.Marshal(reqBody)
+	if err != nil {
+		return fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("DDNS API returned status %d", resp.StatusCode)
+	}
+
+	log.Printf("Successfully called DDNS delete API for peer %s", pubkey)
 	return nil
 }
 

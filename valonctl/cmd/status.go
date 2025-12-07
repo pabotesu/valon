@@ -49,7 +49,7 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	// Check etcd connection
-	etcdClient, err := client.NewEtcdClient(&cfg.Etcd)
+	etcdClient, err := client.NewEtcdClient(&cfg.Etcd, &cfg.DDNS)
 	if err != nil {
 		fmt.Printf("Etcd: ✗ (failed to create client: %v)\n", err)
 	} else {

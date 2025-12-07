@@ -35,7 +35,7 @@ func runPeerRemove(cmd *cobra.Command, args []string) error {
 	defer cancel()
 
 	// Create etcd client
-	etcdClient, err := client.NewEtcdClient(&cfg.Etcd)
+	etcdClient, err := client.NewEtcdClient(&cfg.Etcd, &cfg.DDNS)
 	if err != nil {
 		return fmt.Errorf("failed to create etcd client: %w", err)
 	}

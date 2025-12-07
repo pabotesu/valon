@@ -287,7 +287,7 @@ func (v Valon) nxdomain(w dns.ResponseWriter, r *dns.Msg) (int, error) {
 }
 
 // lookupAlias queries etcd for CNAME alias mapping.
-// Returns the target base32 label if found, empty string otherwise.
+// Returns the target base32 DNS label if found, empty string otherwise.
 func (v Valon) lookupAlias(ctx context.Context, alias string) string {
 	key := fmt.Sprintf("/valon/aliases/%s", alias)
 
@@ -304,7 +304,15 @@ func (v Valon) lookupAlias(ctx context.Context, alias string) string {
 		return ""
 	}
 
-	return strings.TrimSpace(string(resp.Kvs[0].Value))
+	// etcd stores base64 pubkey, convert to base32 DNS label
+	pubkey := strings.TrimSpace(string(resp.Kvs[0].Value))
+	label, err := pubkeyToDnsLabel(pubkey)
+	if err != nil {
+		log.Printf("[valon] Failed to convert pubkey to DNS label: %v", err)
+		return ""
+	}
+
+	return label
 }
 
 // returnCNAME returns a CNAME record pointing to the target label,

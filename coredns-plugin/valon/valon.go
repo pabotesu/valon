@@ -15,6 +15,7 @@ import (
 	"github.com/coredns/coredns/plugin"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"golang.zx2c4.com/wireguard/wgctrl"
+	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 )
 
 // Valon is the main plugin structure.
@@ -79,6 +80,12 @@ func (v *Valon) Init() error {
 	// Load initial data from etcd
 	if err := v.loadFromEtcd(); err != nil {
 		log.Printf("[valon] Warning: failed to load from etcd: %v", err)
+	}
+
+	// Restore WireGuard peers from etcd (for restart resilience)
+	if err := v.restoreWireGuardPeers(); err != nil {
+		log.Printf("[valon] Warning: failed to restore WireGuard peers: %v", err)
+		// Continue anyway - peers will be re-added on next sync
 	}
 
 	// Register self (Discovery Role's own peer info)
@@ -259,4 +266,90 @@ func (v *Valon) getOwnWireGuardIP() (string, error) {
 	}
 
 	return "", fmt.Errorf("no IPv4 address found on interface %s", v.WgInterface)
+}
+
+// restoreWireGuardPeers restores all peers from etcd to WireGuard interface.
+// This is called on plugin initialization to recover from restarts.
+func (v *Valon) restoreWireGuardPeers() error {
+	log.Printf("[valon] Restoring WireGuard peers from etcd...")
+
+	// Get all peers from cache (already loaded from etcd)
+	peers := v.cache.GetAll()
+	if len(peers) == 0 {
+		log.Printf("[valon] No peers to restore")
+		return nil
+	}
+
+	// Create WireGuard client
+	wgClient, err := wgctrl.New()
+	if err != nil {
+		return fmt.Errorf("failed to create WireGuard client: %w", err)
+	}
+	defer wgClient.Close()
+
+	// Get current WireGuard device state
+	device, err := wgClient.Device(v.WgInterface)
+	if err != nil {
+		return fmt.Errorf("failed to get WireGuard device: %w", err)
+	}
+
+	// Build map of existing peers
+	existingPeers := make(map[string]bool)
+	for _, peer := range device.Peers {
+		pubkeyStr := base64.StdEncoding.EncodeToString(peer.PublicKey[:])
+		existingPeers[pubkeyStr] = true
+	}
+
+	// Add missing peers to WireGuard
+	restored := 0
+	skipped := 0
+	for _, peer := range peers {
+		// Skip if peer already exists in WireGuard
+		if existingPeers[peer.PubKey] {
+			skipped++
+			continue
+		}
+
+		// Parse WireGuard IP
+		_, ipNet, err := net.ParseCIDR(peer.WgIP + "/32")
+		if err != nil {
+			log.Printf("[valon] Warning: invalid WgIP for peer %s: %v", peer.PubKey, err)
+			continue
+		}
+
+		// Decode public key
+		pubkeyBytes, err := base64.StdEncoding.DecodeString(peer.PubKey)
+		if err != nil {
+			log.Printf("[valon] Warning: invalid pubkey for peer %s: %v", peer.PubKey, err)
+			continue
+		}
+
+		pubkey, err := wgtypes.NewKey(pubkeyBytes)
+		if err != nil {
+			log.Printf("[valon] Warning: failed to create key for peer %s: %v", peer.PubKey, err)
+			continue
+		}
+
+		// Configure peer
+		peerConfig := wgtypes.PeerConfig{
+			PublicKey:  pubkey,
+			AllowedIPs: []net.IPNet{*ipNet},
+		}
+
+		// Apply configuration
+		config := wgtypes.Config{
+			Peers: []wgtypes.PeerConfig{peerConfig},
+		}
+
+		if err := wgClient.ConfigureDevice(v.WgInterface, config); err != nil {
+			log.Printf("[valon] Warning: failed to restore peer %s: %v", peer.PubKey, err)
+			continue
+		}
+
+		restored++
+		log.Printf("[valon] Restored peer: %s (IP: %s)", peer.PubKey[:16]+"...", peer.WgIP)
+	}
+
+	log.Printf("[valon] WireGuard peer restoration complete: %d restored, %d already existed", restored, skipped)
+	return nil
 }

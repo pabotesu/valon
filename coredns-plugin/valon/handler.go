@@ -14,6 +14,11 @@ import (
 	"github.com/miekg/dns"
 )
 
+const (
+	// DefaultTTL is the TTL for all DNS records (2 seconds for fast updates)
+	DefaultTTL = 2
+)
+
 // ServeDNS implements the plugin.Handler interface.
 func (v Valon) ServeDNS(ctx context.Context, w dns.ResponseWriter, r *dns.Msg) (int, error) {
 	state := request.Request{W: w, Req: r}
@@ -135,7 +140,7 @@ func (v Valon) handleA(ctx context.Context, w dns.ResponseWriter, r *dns.Msg, st
 			Name:   state.Name(),
 			Rrtype: dns.TypeA,
 			Class:  dns.ClassINET,
-			Ttl:    30,
+			Ttl:    DefaultTTL,
 		},
 		A: ip.To4(),
 	}
@@ -200,7 +205,7 @@ func (v Valon) handleSRV(ctx context.Context, w dns.ResponseWriter, r *dns.Msg, 
 					Name:   state.Name(),
 					Rrtype: dns.TypeSRV,
 					Class:  dns.ClassINET,
-					Ttl:    30,
+					Ttl:    DefaultTTL,
 				},
 				Priority: 0, // Higher priority
 				Weight:   0,
@@ -217,7 +222,7 @@ func (v Valon) handleSRV(ctx context.Context, w dns.ResponseWriter, r *dns.Msg, 
 						Name:   target,
 						Rrtype: dns.TypeA,
 						Class:  dns.ClassINET,
-						Ttl:    30,
+						Ttl:    DefaultTTL,
 					},
 					A: ip.To4(),
 				}
@@ -240,7 +245,7 @@ func (v Valon) handleSRV(ctx context.Context, w dns.ResponseWriter, r *dns.Msg, 
 					Name:   state.Name(),
 					Rrtype: dns.TypeSRV,
 					Class:  dns.ClassINET,
-					Ttl:    30,
+					Ttl:    DefaultTTL,
 				},
 				Priority: 10, // Lower priority
 				Weight:   0,
@@ -257,7 +262,7 @@ func (v Valon) handleSRV(ctx context.Context, w dns.ResponseWriter, r *dns.Msg, 
 						Name:   target,
 						Rrtype: dns.TypeA,
 						Class:  dns.ClassINET,
-						Ttl:    30,
+						Ttl:    DefaultTTL,
 					},
 					A: ip.To4(),
 				}
@@ -329,7 +334,7 @@ func (v Valon) returnCNAME(ctx context.Context, w dns.ResponseWriter, r *dns.Msg
 			Name:   state.Name(),
 			Rrtype: dns.TypeCNAME,
 			Class:  dns.ClassINET,
-			Ttl:    30,
+			Ttl:    DefaultTTL,
 		},
 		Target: targetFQDN,
 	}
@@ -357,7 +362,7 @@ func (v Valon) returnCNAME(ctx context.Context, w dns.ResponseWriter, r *dns.Msg
 				Name:   targetFQDN,
 				Rrtype: dns.TypeA,
 				Class:  dns.ClassINET,
-				Ttl:    30,
+				Ttl:    DefaultTTL,
 			},
 			A: ip.To4(),
 		}
@@ -399,7 +404,7 @@ func (v Valon) handleServiceDiscovery(ctx context.Context, w dns.ResponseWriter,
 				Name:   state.Name(),
 				Rrtype: dns.TypeSRV,
 				Class:  dns.ClassINET,
-				Ttl:    30,
+				Ttl:    DefaultTTL,
 			},
 			Priority: 0,
 			Weight:   0,
@@ -417,7 +422,7 @@ func (v Valon) handleServiceDiscovery(ctx context.Context, w dns.ResponseWriter,
 						Name:   target,
 						Rrtype: dns.TypeA,
 						Class:  dns.ClassINET,
-						Ttl:    30,
+						Ttl:    DefaultTTL,
 					},
 					A: ip.To4(),
 				}

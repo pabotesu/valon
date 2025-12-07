@@ -22,8 +22,8 @@ valon.internal:53 {
         etcd_sync_interval 10s
     }
     
-    # Cache responses for 30 seconds
-    cache 30
+    # Cache responses for 2 seconds (fast updates)
+    cache 2
     
     # Log all queries
     log
@@ -35,7 +35,7 @@ valon.internal:53 {
 # Forward all other queries to upstream DNS
 .:53 {
     forward . 8.8.8.8 9.9.9.9
-    cache 30
+    cache 300
     log
     errors
 }

@@ -13,7 +13,7 @@ valon.internal:53 {
         wg_interface wg0
         
         # DDNS API listen address
-        ddns_listen 127.0.0.1:8053
+        ddns_listen 100.100.0.1:8053
         
         # WireGuard polling interval (default: 1s)
         wg_poll_interval 1s

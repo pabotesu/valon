@@ -74,11 +74,7 @@ func (v *Valon) processPeer(peer *wgtypes.Peer) {
 	if existing == nil {
 		// New peer detected but not in cache
 		// Try to load from etcd (in case it was added via valonctl while CoreDNS was running)
-		if v.loadPeerFromEtcd(pubkey, wgIP) {
-			log.Printf("[valon] Loaded peer from etcd into cache: %s (wgIP: %s)", pubkey[:16]+"...", wgIP)
-			// Now update with NAT endpoint
-			existing = v.cache.Get(pubkey)
-		} else {
+		if !v.loadPeerFromEtcd(pubkey, wgIP) {
 			// Not in etcd either - awaiting DDNS registration
 			if peer.LastHandshakeTime.After(time.Now().Add(-30 * time.Second)) {
 				log.Printf("[valon] New peer detected: %s (wgIP: %s, endpoint: %s) - not in cache, awaiting DDNS registration",
@@ -86,6 +82,7 @@ func (v *Valon) processPeer(peer *wgtypes.Peer) {
 			}
 			return
 		}
+		log.Printf("[valon] Loaded peer from etcd into cache: %s (wgIP: %s)", pubkey[:16]+"...", wgIP)
 	}
 
 	// Update cache

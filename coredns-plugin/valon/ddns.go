@@ -79,8 +79,8 @@ func (v *Valon) handleEndpointUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate LAN endpoint format (allow "0.0.0.0:0" for offline)
-	if req.LANEndpoint != "" {
+	// Validate LAN endpoint format (allow "0.0.0.0:0" for offline, or empty for removal)
+	if req.LANEndpoint != "" && req.LANEndpoint != "0.0.0.0:0" {
 		if _, _, err := net.SplitHostPort(req.LANEndpoint); err != nil {
 			v.sendError(w, http.StatusBadRequest, "Invalid lan_endpoint format (expected IP:PORT)")
 			return
@@ -90,15 +90,21 @@ func (v *Valon) handleEndpointUpdate(w http.ResponseWriter, r *http.Request) {
 	// Update cache
 	v.cache.Update(req.PubKey, func(p *PeerInfo) {
 		p.PubKey = req.PubKey
-		if req.LANEndpoint != "" && p.LANEndpoint != req.LANEndpoint {
-			p.LANEndpoint = req.LANEndpoint
+		if p.LANEndpoint != req.LANEndpoint {
+			if req.LANEndpoint == "0.0.0.0:0" || req.LANEndpoint == "" {
+				// Offline: remove LAN endpoint
+				p.LANEndpoint = ""
+			} else {
+				// Online: update LAN endpoint
+				p.LANEndpoint = req.LANEndpoint
+			}
 			p.dirty = true
 		}
 		p.UpdatedAt = time.Now()
 	})
 
-	if req.LANEndpoint == "0.0.0.0:0" {
-		log.Printf("[valon] DDNS: Peer %s marked as offline", req.PubKey)
+	if req.LANEndpoint == "0.0.0.0:0" || req.LANEndpoint == "" {
+		log.Printf("[valon] DDNS: Peer %s went offline (LAN endpoint removed)", req.PubKey)
 	} else {
 		log.Printf("[valon] DDNS: Updated LAN endpoint for %s: %s", req.PubKey, req.LANEndpoint)
 	}
@@ -134,6 +140,7 @@ func (v *Valon) handleEndpointUpdate(w http.ResponseWriter, r *http.Request) {
 
 // handleEndpointDelete handles DELETE /api/endpoint/delete
 // Removes peer from cache and deletes alias from etcd.
+// Only Discovery Role can delete peers (not peers themselves).
 func (v *Valon) handleEndpointDelete(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodDelete && r.Method != http.MethodPost {
 		v.sendError(w, http.StatusMethodNotAllowed, "Method not allowed")
@@ -155,10 +162,11 @@ func (v *Valon) handleEndpointDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Access control: verify source IP
+	// Access control: Only Discovery Role can delete peers
 	clientIP := extractClientIP(r)
-	if !v.isAuthorized(clientIP, req.PubKey) {
-		v.sendError(w, http.StatusForbidden, "Not authorized to delete this peer")
+	if clientIP != v.selfWgIP {
+		log.Printf("[valon] DDNS: Delete rejected - only Discovery Role allowed (clientIP=%s)", clientIP)
+		v.sendError(w, http.StatusForbidden, "Only Discovery Role can delete peers")
 		return
 	}
 

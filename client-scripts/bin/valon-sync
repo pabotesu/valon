@@ -66,6 +66,13 @@ if [[ -z "$OWN_PUBKEY" ]]; then
     exit 1
 fi
 
+# Get WireGuard listen port
+WG_PORT=$(wg show "$WG_INTERFACE" listen-port 2>/dev/null)
+if [[ -z "$WG_PORT" ]]; then
+    echo "Error: Could not get listen port from $WG_INTERFACE" >&2
+    exit 1
+fi
+
 # Get LAN endpoint (detect own LAN IP)
 get_lan_endpoint() {
     # Try to detect LAN IP

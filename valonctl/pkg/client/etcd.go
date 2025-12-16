@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"path"
@@ -128,6 +129,83 @@ func (e *EtcdClient) AddPeer(ctx context.Context, peer *PeerInfo) error {
 	}
 
 	return nil
+}
+
+// AllocateIP allocates the next available IP address from the network CIDR
+func (e *EtcdClient) AllocateIP(ctx context.Context, networkCIDR string) (string, error) {
+	// Parse network CIDR
+	_, ipNet, err := parseNetCIDR(networkCIDR)
+	if err != nil {
+		return "", fmt.Errorf("invalid network CIDR: %w", err)
+	}
+
+	// Get all existing IPs from etcd
+	usedIPs, err := e.getAllUsedIPs(ctx)
+	if err != nil {
+		return "", fmt.Errorf("failed to get used IPs: %w", err)
+	}
+
+	// Find next available IP
+	for ip := incrementIP(ipNet.IP); ipNet.Contains(ip); ip = incrementIP(ip) {
+		ipStr := ip.String()
+
+		// Skip network address and broadcast address
+		if ip.Equal(ipNet.IP) || !ipNet.Contains(incrementIP(ip)) {
+			continue
+		}
+
+		// Check if IP is already used
+		if _, used := usedIPs[ipStr]; !used {
+			return ipStr, nil
+		}
+	}
+
+	return "", fmt.Errorf("no available IP addresses in network %s", networkCIDR)
+}
+
+// getAllUsedIPs retrieves all IP addresses currently in use
+func (e *EtcdClient) getAllUsedIPs(ctx context.Context) (map[string]bool, error) {
+	prefix := path.Join(EtcdKeyPrefix, "peers")
+	resp, err := e.client.Get(ctx, prefix, clientv3.WithPrefix())
+	if err != nil {
+		return nil, err
+	}
+
+	usedIPs := make(map[string]bool)
+	for _, kv := range resp.Kvs {
+		// Keys are like: /valon/peers/<pubkey>/wg_ip
+		if strings.HasSuffix(string(kv.Key), "/wg_ip") {
+			usedIPs[string(kv.Value)] = true
+		}
+	}
+
+	return usedIPs, nil
+}
+
+// parseNetCIDR parses a network CIDR string
+func parseNetCIDR(cidr string) (net.IP, *net.IPNet, error) {
+	ip, ipNet, err := net.ParseCIDR(cidr)
+	if err != nil {
+		return nil, nil, err
+	}
+	return ip, ipNet, nil
+}
+
+// incrementIP increments an IP address by 1
+func incrementIP(ip net.IP) net.IP {
+	// Make a copy
+	result := make(net.IP, len(ip))
+	copy(result, ip)
+
+	// Increment from the end
+	for i := len(result) - 1; i >= 0; i-- {
+		result[i]++
+		if result[i] > 0 {
+			break
+		}
+	}
+
+	return result
 }
 
 // RemovePeer removes a peer from etcd by pubkey or alias

@@ -4,6 +4,17 @@
 wireguard:
   # WireGuard interface name to manage
   interface: wg0
+  
+  # Discovery Role's WireGuard IP address
+  ip: 100.100.0.1
+  
+  # Discovery Role's public endpoint (LAN IP:port or public IP:port)
+  # This will be provided to clients for initial connection
+  endpoint: 192.168.1.100:51820
+  
+  # WireGuard network CIDR for IP auto-allocation
+  # IPs will be automatically assigned from this range
+  network: 100.100.0.0/24
 
 etcd:
   # etcd endpoints for peer registry

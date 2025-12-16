@@ -29,9 +29,8 @@ This command:
 )
 
 func init() {
-	peerAddCmd.Flags().StringVar(&addWgIP, "wg-ip", "", "WireGuard IP address for the peer (required)")
+	peerAddCmd.Flags().StringVar(&addWgIP, "wg-ip", "", "WireGuard IP address for the peer (auto-allocated if not specified)")
 	peerAddCmd.Flags().StringVar(&addAlias, "alias", "", "User-friendly alias for the peer (required)")
-	peerAddCmd.MarkFlagRequired("wg-ip")
 	peerAddCmd.MarkFlagRequired("alias")
 
 	peerCmd.AddCommand(peerAddCmd)
@@ -48,6 +47,24 @@ func runPeerAdd(cmd *cobra.Command, args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
+	// Create etcd client first for IP allocation
+	etcdClient, err := client.NewEtcdClient(&cfg.Etcd, &cfg.DDNS)
+	if err != nil {
+		return fmt.Errorf("failed to create etcd client: %w", err)
+	}
+	defer etcdClient.Close()
+
+	// Auto-allocate IP if not specified
+	if addWgIP == "" {
+		fmt.Println("Auto-allocating IP address...")
+		allocatedIP, err := etcdClient.AllocateIP(ctx, cfg.WireGuard.Network)
+		if err != nil {
+			return fmt.Errorf("failed to auto-allocate IP: %w", err)
+		}
+		addWgIP = allocatedIP
+		fmt.Printf("  Allocated IP: %s\n", addWgIP)
+	}
+
 	// Create WireGuard client
 	wgClient, err := client.NewWireGuardClient()
 	if err != nil {
@@ -60,13 +77,6 @@ func runPeerAdd(cmd *cobra.Command, args []string) error {
 	if err := wgClient.AddPeer(cfg.WireGuard.Interface, pubkey, addWgIP); err != nil {
 		return fmt.Errorf("failed to add peer to WireGuard: %w", err)
 	}
-
-	// Create etcd client
-	etcdClient, err := client.NewEtcdClient(&cfg.Etcd, &cfg.DDNS)
-	if err != nil {
-		return fmt.Errorf("failed to create etcd client: %w", err)
-	}
-	defer etcdClient.Close()
 
 	// Register peer in etcd
 	fmt.Println("Registering peer in etcd...")
@@ -84,5 +94,54 @@ func runPeerAdd(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("✓ Successfully added peer %s (alias: %s, IP: %s)\n", pubkey, addAlias, addWgIP)
+
+	// Generate WireGuard configuration file for the client
+	fmt.Println("\n=== WireGuard Configuration for Client ===")
+	if err := printClientConfig(wgClient, pubkey, addWgIP); err != nil {
+		fmt.Printf("Warning: Failed to generate client config: %v\n", err)
+	}
+	fmt.Println("==========================================")
+
+	return nil
+}
+
+func printClientConfig(wgClient *client.WireGuardClient, clientPubkey, clientIP string) error {
+	// Get Discovery Role's public key
+	discoveryPubkey, err := wgClient.GetPublicKey(cfg.WireGuard.Interface)
+	if err != nil {
+		return fmt.Errorf("failed to get Discovery public key: %w", err)
+	}
+
+	// Use endpoint from config, or provide placeholder
+	discoveryEndpoint := cfg.WireGuard.Endpoint
+	if discoveryEndpoint == "" {
+		discoveryEndpoint = "<DISCOVERY_ROLE_LAN_IP:51820>"
+	}
+
+	// Get network prefix from IP (assume /24 for simplicity, can be enhanced)
+	networkPrefix := "24"
+
+	fmt.Printf(`
+Save this as /etc/wireguard/wg0.conf on the client:
+
+[Interface]
+Address = %s/%s
+PrivateKey = <INSERT_YOUR_PRIVATE_KEY_HERE>
+MTU = 1420
+
+[Peer]
+# Discovery Role
+PublicKey = %s
+Endpoint = %s
+AllowedIPs = %s/32
+PersistentKeepalive = 25
+
+Then run on the client:
+  1. Generate keys: wg genkey | tee privatekey | wg pubkey
+  2. Edit /etc/wireguard/wg0.conf and insert your PrivateKey
+  3. Start interface: sudo wg-quick up wg0
+  4. Bootstrap: sudo valon-bootstrap
+`, clientIP, networkPrefix, discoveryPubkey, discoveryEndpoint, cfg.WireGuard.IP)
+
 	return nil
 }

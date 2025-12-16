@@ -22,6 +22,9 @@ type Config struct {
 // WireGuardConfig holds WireGuard interface configuration
 type WireGuardConfig struct {
 	Interface string `yaml:"interface"` // e.g., "wg0"
+	IP        string `yaml:"ip"`        // Discovery Role's WireGuard IP (e.g., "100.100.0.1")
+	Endpoint  string `yaml:"endpoint"`  // Discovery Role's public endpoint (e.g., "192.168.1.100:51820")
+	Network   string `yaml:"network"`   // WireGuard network CIDR (e.g., "100.100.0.0/24") for IP auto-allocation
 }
 
 // EtcdConfig holds etcd connection settings
@@ -71,6 +74,14 @@ func Load(configPath string) (*Config, error) {
 func (c *Config) Validate() error {
 	if c.WireGuard.Interface == "" {
 		return fmt.Errorf("wireguard.interface is required")
+	}
+
+	if c.WireGuard.IP == "" {
+		return fmt.Errorf("wireguard.ip is required")
+	}
+
+	if c.WireGuard.Network == "" {
+		return fmt.Errorf("wireguard.network is required")
 	}
 
 	if len(c.Etcd.Endpoints) == 0 {

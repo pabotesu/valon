@@ -1,0 +1,106 @@
+#!/bin/bash
+# valon-peer-add - Add peers to WireGuard from configuration file
+#
+# Usage: valon-peer-add [--config /path/to/client.conf]
+
+set -e
+
+# Default paths
+CONFIG_FILE="${CONFIG_FILE:-/etc/valon/client.conf}"
+PEERS_FILE="${PEERS_FILE:-/etc/valon/peers.conf}"
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --config)
+            CONFIG_FILE="$2"
+            shift 2
+            ;;
+        --peers)
+            PEERS_FILE="$2"
+            shift 2
+            ;;
+        -h|--help)
+            echo "Usage: $0 [--config /path/to/client.conf] [--peers /path/to/peers.conf]"
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $1" >&2
+            exit 1
+            ;;
+    esac
+done
+
+# Load configuration
+if [[ ! -f "$CONFIG_FILE" ]]; then
+    echo "Error: Config file not found: $CONFIG_FILE" >&2
+    exit 1
+fi
+source "$CONFIG_FILE"
+
+if [[ ! -f "$PEERS_FILE" ]]; then
+    echo "Error: Peers file not found: $PEERS_FILE" >&2
+    exit 1
+fi
+
+# Check if running as root
+if [[ $EUID -ne 0 ]]; then
+   echo "Error: This script must be run as root" >&2
+   exit 1
+fi
+
+# Check if WireGuard interface exists
+if ! ip link show "$WG_INTERFACE" &> /dev/null; then
+    echo "Error: WireGuard interface $WG_INTERFACE not found" >&2
+    exit 1
+fi
+
+echo "Adding peers to $WG_INTERFACE..."
+
+# Parse peers.conf and extract peer definitions
+peer_count=0
+while IFS='=' read -r key value; do
+    # Skip comments and empty lines
+    [[ "$key" =~ ^#.*$ ]] && continue
+    [[ -z "$key" ]] && continue
+    
+    # Remove leading/trailing whitespace
+    key=$(echo "$key" | xargs)
+    value=$(echo "$value" | xargs)
+    
+    # Match PEER_<name>_PUBKEY
+    if [[ "$key" =~ ^PEER_([A-Z0-9_]+)_PUBKEY$ ]]; then
+        peer_name="${BASH_REMATCH[1]}"
+        pubkey="$value"
+        
+        # Look for corresponding ALIAS
+        alias_key="PEER_${peer_name}_ALIAS"
+        alias=""
+        while IFS='=' read -r k v; do
+            k=$(echo "$k" | xargs)
+            v=$(echo "$v" | xargs)
+            if [[ "$k" == "$alias_key" ]]; then
+                alias="$v"
+                break
+            fi
+        done < "$PEERS_FILE"
+        
+        # Add peer to WireGuard
+        echo "  Adding peer: $peer_name (alias: ${alias:-none})"
+        echo "    Public key: ${pubkey:0:20}..."
+        echo "    Allowed IPs: $ALLOWED_IPS"
+        
+        # Check if peer already exists
+        if wg show "$WG_INTERFACE" | grep -q "$pubkey"; then
+            echo "    → Already exists, skipping"
+        else
+            wg set "$WG_INTERFACE" peer "$pubkey" allowed-ips "$ALLOWED_IPS"
+            echo "    → Added successfully"
+            ((peer_count++))
+        fi
+        
+        echo
+    fi
+done < "$PEERS_FILE"
+
+echo "✓ Added $peer_count new peer(s) to $WG_INTERFACE"

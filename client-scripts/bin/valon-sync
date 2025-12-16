@@ -1,0 +1,302 @@
+#!/bin/bash
+# valon-sync - Sync own endpoint and resolve peer endpoints
+#
+# Usage: valon-sync [--config /path/to/client.conf] [--peer <pubkey>]
+
+set -e
+
+# Default paths
+CONFIG_FILE="${CONFIG_FILE:-/etc/valon/client.conf}"
+PEERS_FILE="${PEERS_FILE:-/etc/valon/peers.conf}"
+TARGET_PEER=""
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --config)
+            CONFIG_FILE="$2"
+            shift 2
+            ;;
+        --peer)
+            TARGET_PEER="$2"
+            shift 2
+            ;;
+        -h|--help)
+            echo "Usage: $0 [--config /path/to/client.conf] [--peer <pubkey>]"
+            echo ""
+            echo "Sync own LAN endpoint to Discovery and update peer endpoints"
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $1" >&2
+            exit 1
+            ;;
+    esac
+done
+
+# Load configuration
+if [[ ! -f "$CONFIG_FILE" ]]; then
+    echo "Error: Config file not found: $CONFIG_FILE" >&2
+    exit 1
+fi
+source "$CONFIG_FILE"
+
+# Check if running as root
+if [[ $EUID -ne 0 ]]; then
+   echo "Error: This script must be run as root" >&2
+   exit 1
+fi
+
+# Validate configuration
+if [[ -z "$WG_INTERFACE" || -z "$OWN_WG_IP" || -z "$OWN_ALIAS" ]]; then
+    echo "Error: Missing required configuration (WG_INTERFACE, OWN_WG_IP, OWN_ALIAS)" >&2
+    exit 1
+fi
+
+# Check if WireGuard interface exists
+if ! ip link show "$WG_INTERFACE" &> /dev/null; then
+    echo "Error: WireGuard interface $WG_INTERFACE not found" >&2
+    exit 1
+fi
+
+# Get own public key
+OWN_PUBKEY=$(wg show "$WG_INTERFACE" public-key)
+if [[ -z "$OWN_PUBKEY" ]]; then
+    echo "Error: Could not get public key from $WG_INTERFACE" >&2
+    exit 1
+fi
+
+# Get LAN endpoint (detect own LAN IP)
+get_lan_endpoint() {
+    # Try to detect LAN IP
+    local lan_ip
+    
+    # Method 1: Get IP from default route interface
+    lan_ip=$(ip route get 1 2>/dev/null | awk '{print $7; exit}')
+    
+    # Method 2: Fallback to first non-loopback IP
+    if [[ -z "$lan_ip" ]]; then
+        lan_ip=$(ip -4 addr show | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v '^127\.' | head -n1)
+    fi
+    
+    if [[ -n "$lan_ip" ]]; then
+        echo "${lan_ip}:${WG_PORT}"
+    fi
+}
+
+# Update own endpoint to Discovery
+update_own_endpoint() {
+    local lan_endpoint
+    lan_endpoint=$(get_lan_endpoint)
+    
+    if [[ -z "$lan_endpoint" ]]; then
+        echo "Warning: Could not detect LAN IP" >&2
+        lan_endpoint=""
+    fi
+    
+    echo "Updating own endpoint to Discovery Role..."
+    echo "  Public key: ${OWN_PUBKEY:0:20}..."
+    echo "  WireGuard IP: $OWN_WG_IP"
+    echo "  Alias: $OWN_ALIAS"
+    echo "  LAN endpoint: ${lan_endpoint:-none}"
+    
+    local response
+    response=$(curl -s -X POST "$DISCOVERY_API/api/endpoint" \
+        -H "Content-Type: application/json" \
+        -d "{
+            \"pubkey\": \"$OWN_PUBKEY\",
+            \"lan_endpoint\": \"$lan_endpoint\",
+            \"alias\": \"$OWN_ALIAS\"
+        }")
+    
+    if echo "$response" | grep -q '"success":true'; then
+        echo "  ✓ Updated successfully"
+        return 0
+    else
+        echo "  ✗ Update failed: $response" >&2
+        return 1
+    fi
+}
+
+# Helper: Convert pubkey to DNS label
+pubkey_to_label() {
+    echo -n "$1" | base64 -d | base32 | tr '[:upper:]' '[:lower:]' | tr -d '='
+}
+
+# Helper: Test endpoint connectivity
+test_endpoint() {
+    local endpoint="$1"
+    local ip port
+    
+    # Split IP:PORT
+    ip="${endpoint%:*}"
+    port="${endpoint##*:}"
+    
+    # Skip if empty or 0.0.0.0
+    [[ -z "$ip" || "$ip" == "0.0.0.0" ]] && return 1
+    
+    # Ping test
+    if ping -c "$PING_COUNT" -W "$PING_TIMEOUT" "$ip" &> /dev/null; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+# Helper: Get endpoints for a peer
+get_peer_endpoints() {
+    local pubkey="$1"
+    local label alias
+    
+    label=$(pubkey_to_label "$pubkey")
+    
+    # Try alias first (from peers.conf)
+    while IFS='=' read -r key value; do
+        [[ "$key" =~ ^#.*$ ]] && continue
+        [[ -z "$key" ]] && continue
+        
+        key=$(echo "$key" | xargs)
+        value=$(echo "$value" | xargs)
+        
+        if [[ "$value" == "$pubkey" ]]; then
+            # Found matching pubkey, look for alias
+            peer_name=$(echo "$key" | sed 's/PEER_\(.*\)_PUBKEY/\1/')
+            alias_key="PEER_${peer_name}_ALIAS"
+            
+            while IFS='=' read -r k v; do
+                k=$(echo "$k" | xargs)
+                v=$(echo "$v" | xargs)
+                if [[ "$k" == "$alias_key" ]]; then
+                    alias="$v"
+                    break
+                fi
+            done < "$PEERS_FILE"
+            break
+        fi
+    done < "$PEERS_FILE"
+    
+    # Query DNS for endpoints
+    local lan_endpoint nat_endpoint
+    
+    if [[ -n "$alias" ]]; then
+        # Try alias-based query first
+        lan_endpoint=$(dig @"$DISCOVERY_DNS" +short "lan.${alias}.$DNS_ZONE" 2>/dev/null | grep -v '^;' | head -n1)
+        nat_endpoint=$(dig @"$DISCOVERY_DNS" +short "nated.${alias}.$DNS_ZONE" 2>/dev/null | grep -v '^;' | head -n1)
+    fi
+    
+    # Fallback to pubkey-based query
+    if [[ -z "$lan_endpoint" && -z "$nat_endpoint" ]]; then
+        lan_endpoint=$(dig @"$DISCOVERY_DNS" +short "lan.${label}.$DNS_ZONE" 2>/dev/null | grep -v '^;' | head -n1)
+        nat_endpoint=$(dig @"$DISCOVERY_DNS" +short "nated.${label}.$DNS_ZONE" 2>/dev/null | grep -v '^;' | head -n1)
+    fi
+    
+    # Append port if needed
+    if [[ -n "$lan_endpoint" && ! "$lan_endpoint" =~ : ]]; then
+        lan_endpoint="${lan_endpoint}:${WG_PORT}"
+    fi
+    if [[ -n "$nat_endpoint" && ! "$nat_endpoint" =~ : ]]; then
+        nat_endpoint="${nat_endpoint}:${WG_PORT}"
+    fi
+    
+    echo "$lan_endpoint|$nat_endpoint"
+}
+
+# Process a single peer
+process_peer() {
+    local pubkey="$1"
+    local peer_name="${2:-unknown}"
+    
+    echo "Processing peer: $peer_name"
+    echo "  Public key: ${pubkey:0:20}..."
+    
+    # Get endpoints
+    local endpoints lan_endpoint nat_endpoint
+    endpoints=$(get_peer_endpoints "$pubkey")
+    lan_endpoint="${endpoints%|*}"
+    nat_endpoint="${endpoints#*|}"
+    
+    echo "  LAN endpoint: ${lan_endpoint:-none}"
+    echo "  NAT endpoint: ${nat_endpoint:-none}"
+    
+    # Test and select best endpoint
+    local best_endpoint=""
+    
+    if [[ -n "$lan_endpoint" ]]; then
+        echo "  Testing LAN endpoint..."
+        if test_endpoint "$lan_endpoint"; then
+            echo "    ✓ LAN reachable"
+            best_endpoint="$lan_endpoint"
+        else
+            echo "    ✗ LAN unreachable"
+        fi
+    fi
+    
+    if [[ -z "$best_endpoint" && -n "$nat_endpoint" ]]; then
+        echo "  Testing NAT endpoint..."
+        if test_endpoint "$nat_endpoint"; then
+            echo "    ✓ NAT reachable"
+            best_endpoint="$nat_endpoint"
+        else
+            echo "    ✗ NAT unreachable"
+        fi
+    fi
+    
+    # Update WireGuard endpoint
+    if [[ -n "$best_endpoint" ]]; then
+        echo "  Setting endpoint: $best_endpoint"
+        wg set "$WG_INTERFACE" peer "$pubkey" endpoint "$best_endpoint"
+        echo "  ✓ Updated successfully"
+    else
+        echo "  ⚠ No reachable endpoint found"
+    fi
+    
+    echo
+}
+
+# Main logic
+echo "=== VALON Sync ==="
+echo
+
+# Step 1: Update own endpoint
+update_own_endpoint
+echo
+
+# Step 2: Update peer endpoints
+if [[ -n "$TARGET_PEER" ]]; then
+    # Process single peer
+    echo "Updating endpoint for specific peer..."
+    echo
+    process_peer "$TARGET_PEER"
+else
+    # Process all peers from WireGuard interface
+    echo "Updating endpoints for all peers on $WG_INTERFACE..."
+    echo
+    
+    peer_count=0
+    while read -r line; do
+        if [[ "$line" =~ ^peer:\ (.+)$ ]]; then
+            pubkey="${BASH_REMATCH[1]}"
+            
+            # Look up peer name from peers.conf
+            peer_name=""
+            while IFS='=' read -r key value; do
+                [[ "$key" =~ ^#.*$ ]] && continue
+                key=$(echo "$key" | xargs)
+                value=$(echo "$value" | xargs)
+                
+                if [[ "$value" == "$pubkey" ]]; then
+                    peer_name=$(echo "$key" | sed 's/PEER_\(.*\)_PUBKEY/\1/')
+                    break
+                fi
+            done < "$PEERS_FILE" 2>/dev/null || true
+            
+            process_peer "$pubkey" "${peer_name:-unknown}"
+            ((peer_count++))
+        fi
+    done < <(wg show "$WG_INTERFACE" dump | tail -n +2)
+    
+    echo "✓ Processed $peer_count peer(s)"
+fi
+
+echo
+echo "=== Sync completed ==="

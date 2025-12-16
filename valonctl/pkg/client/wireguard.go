@@ -28,6 +28,15 @@ func (w *WireGuardClient) Close() error {
 	return w.client.Close()
 }
 
+// GetPublicKey retrieves the public key for the specified interface
+func (w *WireGuardClient) GetPublicKey(interfaceName string) (string, error) {
+	device, err := w.client.Device(interfaceName)
+	if err != nil {
+		return "", fmt.Errorf("failed to get device %s: %w", interfaceName, err)
+	}
+	return device.PublicKey.String(), nil
+}
+
 // GetDevice retrieves device information for the specified interface
 func (w *WireGuardClient) GetDevice(interfaceName string) (*wgtypes.Device, error) {
 	device, err := w.client.Device(interfaceName)

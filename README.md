@@ -97,6 +97,9 @@ sudo podman exec valon-etcd etcdctl endpoint health
 #### 2.2. CoreDNS with VALON Plugin のビルド
 
 ```bash
+# VALONリポジトリのルートディレクトリを変数に設定
+VALON_ROOT=$(pwd)  # 現在のディレクトリがVALONリポジトリのルート
+
 # ビルドディレクトリ作成
 mkdir -p build
 cd build
@@ -109,10 +112,18 @@ cd coredns
 # 他のプラグインの後に追加（例: hosts の後）
 echo "valon:github.com/pabotesu/valon/coredns-plugin/valon" >> plugin.cfg
 
-# go.mod を調整してローカルのVALONプラグインを参照
-go mod edit -replace github.com/pabotesu/valon/coredns-plugin=/path/to/valon/coredns-plugin
+# coredns-plugin ディレクトリをGoモジュール化（初回のみ）
+cd ${VALON_ROOT}/coredns-plugin
+go mod init github.com/pabotesu/valon/coredns-plugin
+go mod tidy
 
-# 依存関係の整理（自動的にダウンロードも実行される）
+# CoreDNS ビルドディレクトリに戻る
+cd ${VALON_ROOT}/build/coredns
+
+# go.mod を調整してローカルのVALONプラグインを参照
+go mod edit -replace github.com/pabotesu/valon/coredns-plugin=${VALON_ROOT}/coredns-plugin
+
+# 依存関係の整理
 go mod tidy
 
 # CoreDNS をビルド（VALON プラグインを含む）
@@ -122,8 +133,6 @@ go build -o ../../bin/coredns
 # 確認
 ../../bin/coredns -plugins | grep valon
 ```
-
-**注意**: `/path/to/valon/coredns-plugin` は実際のVALONリポジトリのパスに置き換えてください。
 
 #### 2.3. WireGuard インターフェースの作成
 

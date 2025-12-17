@@ -15,6 +15,10 @@ wireguard:
   # WireGuard network CIDR for IP auto-allocation
   # IPs will be automatically assigned from this range
   network: 100.100.0.0/24
+  
+  # DNS zone for VALON network
+  # Used for split-DNS configuration in client WireGuard configs
+  dns_zone: valon.internal
 
 etcd:
   # etcd endpoints for peer registry

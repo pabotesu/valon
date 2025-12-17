@@ -127,6 +127,7 @@ Save this as /etc/wireguard/wg0.conf on the client:
 [Interface]
 Address = %s/%s
 PrivateKey = <INSERT_YOUR_PRIVATE_KEY_HERE>
+DNS = %s, %s
 MTU = 1420
 
 [Peer]
@@ -141,7 +142,7 @@ Then run on the client:
   2. Edit /etc/wireguard/wg0.conf and insert your PrivateKey
   3. Start interface: sudo wg-quick up wg0
   4. Bootstrap: sudo valon-bootstrap
-`, clientIP, networkPrefix, discoveryPubkey, discoveryEndpoint, cfg.WireGuard.IP)
+`, clientIP, networkPrefix, cfg.WireGuard.IP, cfg.WireGuard.DNSZone, discoveryPubkey, discoveryEndpoint, cfg.WireGuard.IP)
 
 	return nil
 }

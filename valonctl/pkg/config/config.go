@@ -25,6 +25,7 @@ type WireGuardConfig struct {
 	IP        string `yaml:"ip"`        // Discovery Role's WireGuard IP (e.g., "100.100.0.1")
 	Endpoint  string `yaml:"endpoint"`  // Discovery Role's public endpoint (e.g., "192.168.1.100:51820")
 	Network   string `yaml:"network"`   // WireGuard network CIDR (e.g., "100.100.0.0/24") for IP auto-allocation
+	DNSZone   string `yaml:"dns_zone"`  // DNS zone for VALON network (e.g., "valon.internal")
 }
 
 // EtcdConfig holds etcd connection settings
@@ -82,6 +83,10 @@ func (c *Config) Validate() error {
 
 	if c.WireGuard.Network == "" {
 		return fmt.Errorf("wireguard.network is required")
+	}
+
+	if c.WireGuard.DNSZone == "" {
+		return fmt.Errorf("wireguard.dns_zone is required")
 	}
 
 	if len(c.Etcd.Endpoints) == 0 {

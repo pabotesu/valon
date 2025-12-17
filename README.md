@@ -442,10 +442,6 @@ dig @100.100.0.1 lan.client01.valon.internal
   }
   ```
 
-## ライセンス
-
-MIT License
-
 ## 参考リンク
 
 - [WireGuard](https://www.wireguard.com/)

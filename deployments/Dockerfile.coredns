@@ -14,11 +14,12 @@ WORKDIR /build/coredns
 RUN echo "valon:github.com/pabotesu/valon/coredns-plugin/valon" >> plugin.cfg
 
 # VALONモジュールをローカル参照
-RUN go mod edit -replace github.com/pabotesu/valon=/build/valon
+RUN go mod edit -replace github.com/pabotesu/valon=/build/valon && \
+    go mod edit -require github.com/pabotesu/valon@v0.0.0
 
 # ビルド
-RUN go mod tidy && \
-    go generate && \
+RUN go generate && \
+    go mod tidy && \
     go build -o /coredns
 
 # 実行用イメージ

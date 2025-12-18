@@ -24,6 +24,9 @@ services:
       dockerfile: deployments/Dockerfile.coredns
     container_name: valon-coredns
     network_mode: host
+    user: root
+    cap_add:
+      - NET_ADMIN
     depends_on:
       etcd:
         condition: service_healthy

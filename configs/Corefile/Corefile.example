@@ -1,0 +1,44 @@
+# VALON CoreDNS Configuration Example
+# 
+# This is a minimal configuration for testing the VALON plugin.
+
+# VALON zone - bind to WireGuard IP only
+valon.internal:53 {
+    bind 100.100.0.1
+    
+    # VALON plugin configuration
+    valon {
+        # etcd endpoints
+        etcd_endpoints http://127.0.0.1:2379
+        
+        # WireGuard interface to monitor
+        wg_interface wg0
+        
+        # DDNS API listen address
+        ddns_listen 100.100.0.1:8053
+        
+        # WireGuard polling interval (default: 1s)
+        wg_poll_interval 1s
+        
+        # etcd sync interval (default: 10s)
+        etcd_sync_interval 10s
+    }
+    
+    # Cache responses for 2 seconds (fast updates)
+    cache 2
+    
+    # Log all queries
+    log
+    
+    # Log errors
+    errors
+}
+
+# Forward all other queries to upstream DNS - bind to WireGuard IP only
+.:53 {
+    bind 100.100.0.1
+    forward . 8.8.8.8 9.9.9.9
+    cache 300
+    log
+    errors
+}

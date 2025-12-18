@@ -47,8 +47,8 @@ VALON は以下の機能を提供します：
 valon/
 ├── coredns-plugin/valon/   # CoreDNS カスタムプラグイン (Go)
 ├── valonctl/               # Discovery Role 管理 CLI (Go)
-├── client-scripts/         # Client Role スクリプト群 (Bash)
-├── deployments/            # etcd コンテナ設定 (Podman/Docker)
+├── client-scripts/         # Client Role スクリプト群 
+├── deployments/            # etcd・CoreDNS コンテナ設定 (Podman/Docker)
 ├── configs/                # 設定ファイル例
 └── bin/                    # ビルド済みバイナリ
 ```
@@ -72,69 +72,9 @@ valon/
 
 ### 2. Discovery Role のセットアップ
 
-#### 2.1. etcd の起動
+#### 2.1. WireGuard インターフェースの作成（最初に実行）
 
-```bash
-cd deployments
-
-# イメージビルド
-sudo podman build -t valon-etcd:latest .
-
-# コンテナ起動
-sudo podman run -d \
-  --name valon-etcd \
-  -p 2379:2379 \
-  -p 2380:2380 \
-  -v valon-etcd-data:/etcd-data \
-  valon-etcd:latest
-
-# 動作確認
-sudo podman exec valon-etcd etcdctl endpoint health
-```
-
-詳細は [deployments/README.md](deployments/README.md) を参照。
-
-#### 2.2. CoreDNS with VALON Plugin のビルド
-
-```bash
-# VALONリポジトリのルートディレクトリを変数に設定
-VALON_ROOT=$(pwd)  # 現在のディレクトリがVALONリポジトリのルート
-
-# ビルドディレクトリ作成
-mkdir -p build
-cd build
-
-# CoreDNS ソースをクローン
-git clone https://github.com/coredns/coredns.git
-cd coredns
-
-# VALON プラグインを plugin.cfg に追加
-# 他のプラグインの後に追加（例: hosts の後）
-echo "valon:github.com/pabotesu/valon/coredns-plugin/valon" >> plugin.cfg
-
-# coredns-plugin ディレクトリをGoモジュール化（初回のみ）
-cd ${VALON_ROOT}/coredns-plugin
-go mod init github.com/pabotesu/valon/coredns-plugin
-go mod tidy
-
-# CoreDNS ビルドディレクトリに戻る
-cd ${VALON_ROOT}/build/coredns
-
-# go.mod を調整してローカルのVALONプラグインを参照
-go mod edit -replace github.com/pabotesu/valon/coredns-plugin=${VALON_ROOT}/coredns-plugin
-
-# 依存関係の整理
-go mod tidy
-
-# CoreDNS をビルド（VALON プラグインを含む）
-go generate
-go build -o ../../bin/coredns
-
-# 確認
-../../bin/coredns -plugins | grep valon
-```
-
-#### 2.3. WireGuard インターフェースの作成
+**重要**: CoreDNS起動前にWireGuardインターフェースが必要です。
 
 ```bash
 # 秘密鍵生成
@@ -150,32 +90,59 @@ EOF
 
 # インターフェース起動
 sudo wg-quick up wg0
+
+# 起動確認
+ip addr show wg0
 ```
 
-#### 2.4. CoreDNS 設定
+#### 2.2. CoreDNS 設定ファイルの準備
 
 ```bash
-# /etc/coredns/Corefile を作成
-cat <<EOF | sudo tee /etc/coredns/Corefile
-valon.internal:53 {
-    valon {
-        etcd_endpoints http://127.0.0.1:2379
-        wg_interface wg0
-        wg_port 51820
-        ddns_listen 100.100.0.1:8053
-        zone valon.internal
-        ttl 2
-    }
-    log
-    errors
-}
-EOF
+# configs/Corefile を編集（必要に応じて）
+cat configs/Corefile.example
 
-# CoreDNS 起動
-sudo /path/to/bin/coredns -conf /etc/coredns/Corefile
+# 設定例:
+# valon.internal:53 {
+#     valon {
+#         etcd_endpoints http://127.0.0.1:2379
+#         wg_interface wg0
+#         ddns_listen 100.100.0.1:8053
+#         wg_poll_interval 1s
+#         etcd_sync_interval 10s
+#     }
+#     cache 2
+#     log
+#     errors
+# }
 ```
 
-#### 2.5. valonctl のビルドと設定
+#### 2.3. etcd + CoreDNS の起動（Podman Compose）
+
+```bash
+cd deployments
+
+# ビルド＋起動（初回はビルドに数分かかります）
+sudo podman-compose up -d --build
+
+# または Dockerの場合
+sudo docker-compose up -d --build
+
+# ログ確認
+sudo podman-compose logs -f
+
+# 動作確認
+sudo podman exec valon-etcd etcdctl endpoint health
+sudo podman logs valon-coredns
+```
+
+**注意**: 
+- CoreDNSはホストネットワークモード（`network_mode: host`）で動作します
+- wg0インターフェースとWireGuard IPが必要です
+- DDNS APIは `100.100.0.1:8053` でリッスンします
+
+詳細は [deployments/README.md](deployments/README.md) を参照。
+
+#### 2.4. valonctl のビルドと設定
 
 ```bash
 # valonctl ビルド

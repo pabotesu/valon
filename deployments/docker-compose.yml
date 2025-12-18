@@ -1,0 +1,36 @@
+version: '3.8'
+
+services:
+  etcd:
+    build:
+      context: .
+      dockerfile: Dockerfile.etcd
+    container_name: valon-etcd
+    volumes:
+      - etcd-data:/etcd-data
+    ports:
+      - "2379:2379"
+      - "2380:2380"
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  coredns:
+    build:
+      context: ..
+      dockerfile: deployments/Dockerfile.coredns
+    container_name: valon-coredns
+    network_mode: host
+    depends_on:
+      etcd:
+        condition: service_healthy
+    volumes:
+      - ../configs/Corefile:/etc/coredns/Corefile:ro
+    restart: unless-stopped
+
+volumes:
+  etcd-data:
+    driver: local

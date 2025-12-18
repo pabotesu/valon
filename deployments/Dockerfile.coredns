@@ -1,0 +1,39 @@
+FROM golang:1.24 AS builder
+
+WORKDIR /build
+
+# VALONリポジトリ全体をコピー（go.modを含む）
+COPY . /build/valon
+
+# CoreDNSをクローン
+RUN git clone https://github.com/coredns/coredns.git /build/coredns
+
+WORKDIR /build/coredns
+
+# plugin.cfgにVALONを追加
+RUN echo "valon:github.com/pabotesu/valon/coredns-plugin/valon" >> plugin.cfg
+
+# VALONモジュールをローカル参照
+RUN go mod edit -replace github.com/pabotesu/valon=/build/valon
+
+# ビルド
+RUN go mod tidy && \
+    go generate && \
+    go build -o /coredns
+
+# 実行用イメージ
+FROM debian:bookworm-slim
+
+# 必要なパッケージをインストール
+RUN apt-get update && \
+    apt-get install -y ca-certificates iproute2 && \
+    rm -rf /var/lib/apt/lists/*
+
+# CoreDNSバイナリをコピー
+COPY --from=builder /coredns /usr/bin/coredns
+
+# CoreDNS用ポート
+EXPOSE 53/udp 53/tcp 8053/tcp
+
+ENTRYPOINT ["/usr/bin/coredns"]
+CMD ["-conf", "/etc/coredns/Corefile"]

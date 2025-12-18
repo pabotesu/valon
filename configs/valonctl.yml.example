@@ -23,7 +23,7 @@ wireguard:
 etcd:
   # etcd endpoints for peer registry
   endpoints:
-    - https://localhost:2379
+    - http://127.0.0.1:2379
   
   # Optional TLS configuration for etcd
   # tls:

@@ -2,8 +2,10 @@
 # 
 # This is a minimal configuration for testing the VALON plugin.
 
-# VALON zone
+# VALON zone - bind to WireGuard IP only
 valon.internal:53 {
+    bind 100.100.0.1
+    
     # VALON plugin configuration
     valon {
         # etcd endpoints
@@ -32,8 +34,9 @@ valon.internal:53 {
     errors
 }
 
-# Forward all other queries to upstream DNS
+# Forward all other queries to upstream DNS - bind to WireGuard IP only
 .:53 {
+    bind 100.100.0.1
     forward . 8.8.8.8 9.9.9.9
     cache 300
     log

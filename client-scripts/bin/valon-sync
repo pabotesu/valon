@@ -201,18 +201,38 @@ get_peer_endpoints() {
     
     label=$(pubkey_to_label "$pubkey")
     
-    # Query DNS for endpoints (pubkey-based only)
-    local lan_endpoint nat_endpoint
+    # Query SRV records for endpoints with ports
+    local lan_endpoint nat_endpoint lan_srv nat_srv
     
-    lan_endpoint=$(dig @"$DISCOVERY_DNS" +short "lan.${label}.$DNS_ZONE" 2>/dev/null | grep -v '^;' | head -n1)
-    nat_endpoint=$(dig @"$DISCOVERY_DNS" +short "nated.${label}.$DNS_ZONE" 2>/dev/null | grep -v '^;' | head -n1)
+    # Get SRV records
+    lan_srv=$(dig @"$DISCOVERY_DNS" +short "_wireguard._udp.$label.$DNS_ZONE" SRV 2>/dev/null | grep 'lan\.' | head -n1)
+    nat_srv=$(dig @"$DISCOVERY_DNS" +short "_wireguard._udp.$label.$DNS_ZONE" SRV 2>/dev/null | grep 'nated\.' | head -n1)
     
-    # Append port if needed
-    if [[ -n "$lan_endpoint" && ! "$lan_endpoint" =~ : ]]; then
-        lan_endpoint="${lan_endpoint}:${WG_PORT}"
+    # Parse SRV: priority weight port target
+    if [[ -n "$lan_srv" ]]; then
+        local port target
+        port=$(echo "$lan_srv" | awk '{print $3}')
+        target=$(echo "$lan_srv" | awk '{print $4}' | sed 's/\.$//')
+        
+        # Resolve target to IP
+        local ip
+        ip=$(dig @"$DISCOVERY_DNS" +short "$target" A 2>/dev/null | head -n1)
+        if [[ -n "$ip" ]]; then
+            lan_endpoint="${ip}:${port}"
+        fi
     fi
-    if [[ -n "$nat_endpoint" && ! "$nat_endpoint" =~ : ]]; then
-        nat_endpoint="${nat_endpoint}:${WG_PORT}"
+    
+    if [[ -n "$nat_srv" ]]; then
+        local port target
+        port=$(echo "$nat_srv" | awk '{print $3}')
+        target=$(echo "$nat_srv" | awk '{print $4}' | sed 's/\.$//')
+        
+        # Resolve target to IP
+        local ip
+        ip=$(dig @"$DISCOVERY_DNS" +short "$target" A 2>/dev/null | head -n1)
+        if [[ -n "$ip" ]]; then
+            nat_endpoint="${ip}:${port}"
+        fi
     fi
     
     echo "$lan_endpoint|$nat_endpoint"

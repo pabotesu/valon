@@ -9,6 +9,7 @@ set -e
 WG_INTERFACE="${WG_INTERFACE:-wg0}"
 PUBKEY=""
 ALLOWED_IPS=""
+KEEPALIVE="0"
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -25,16 +26,22 @@ while [[ $# -gt 0 ]]; do
             ALLOWED_IPS="$2"
             shift 2
             ;;
+        --keepalive)
+            KEEPALIVE="$2"
+            shift 2
+            ;;
         -h|--help)
-            echo "Usage: $0 --pubkey <public_key> --allowed-ips <ips> [--interface wg0]"
+            echo "Usage: $0 --pubkey <public_key> --allowed-ips <ips> [--interface wg0] [--keepalive seconds]"
             echo ""
             echo "Options:"
             echo "  --pubkey        WireGuard public key of the peer"
             echo "  --allowed-ips   Allowed IP addresses (comma-separated)"
             echo "  --interface     WireGuard interface name (default: wg0)"
+            echo "  --keepalive     Persistent keepalive interval in seconds (default: 0, disabled)"
+            echo "                  Recommended: 25 seconds for peers behind NAT"
             echo ""
             echo "Example:"
-            echo "  $0 --pubkey 'abc123...' --allowed-ips '100.100.0.2/32'"
+            echo "  $0 --pubkey 'abc123...' --allowed-ips '100.100.0.2/32' --keepalive 25"
             exit 0
             ;;
         *)
@@ -71,13 +78,14 @@ fi
 echo "Adding peer to $WG_INTERFACE..."
 echo "  Public key: ${PUBKEY:0:20}..."
 echo "  Allowed IPs: $ALLOWED_IPS"
+echo "  Keepalive: ${KEEPALIVE}s"
 
 # Check if peer already exists
 if wg show "$WG_INTERFACE" | grep -q "$PUBKEY"; then
-    echo "  → Peer already exists, updating allowed-ips..."
-    wg set "$WG_INTERFACE" peer "$PUBKEY" allowed-ips "$ALLOWED_IPS"
+    echo "  → Peer already exists, updating configuration..."
+    wg set "$WG_INTERFACE" peer "$PUBKEY" allowed-ips "$ALLOWED_IPS" persistent-keepalive "$KEEPALIVE"
     echo "  ✓ Updated successfully"
 else
-    wg set "$WG_INTERFACE" peer "$PUBKEY" allowed-ips "$ALLOWED_IPS"
+    wg set "$WG_INTERFACE" peer "$PUBKEY" allowed-ips "$ALLOWED_IPS" persistent-keepalive "$KEEPALIVE"
     echo "  ✓ Added successfully"
 fi

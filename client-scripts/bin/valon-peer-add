@@ -1,109 +1,60 @@
 #!/bin/bash
-# valon-peer-add - Add peers to WireGuard from configuration file
+# valon-peer-add - Add a peer to WireGuard interface
 #
-# Usage: valon-peer-add [--config /path/to/client.conf]
+# Usage: valon-peer-add --pubkey <public_key> --allowed-ips <ips> [--interface wg0]
 
 set -e
 
-# Configuration search order (same as valon-sync)
-find_config() {
-    local candidates=(
-        "${VALON_CONFIG}"
-        "${CONFIG_FILE}"
-        "./valon-sync.conf"
-        "${HOME}/.config/valon/client.conf"
-        "/etc/valon/client.conf"
-    )
-    
-    for conf in "${candidates[@]}"; do
-        if [[ -n "$conf" && -f "$conf" ]]; then
-            echo "$conf"
-            return 0
-        fi
-    done
-    return 1
-}
-
-# Peers file search order
-find_peers() {
-    local candidates=(
-        "${VALON_PEERS}"
-        "${PEERS_FILE}"
-        "./peers.conf"
-        "${HOME}/.config/valon/peers.conf"
-        "/etc/valon/peers.conf"
-    )
-    
-    for conf in "${candidates[@]}"; do
-        if [[ -n "$conf" && -f "$conf" ]]; then
-            echo "$conf"
-            return 0
-        fi
-    done
-    return 1
-}
-
-# Default paths
-CONFIG_FILE="$(find_config || true)"
-PEERS_FILE="$(find_peers || true)"
+# Defaults
+WG_INTERFACE="${WG_INTERFACE:-wg0}"
+PUBKEY=""
+ALLOWED_IPS=""
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --config)
-            CONFIG_FILE="$2"
+        --interface)
+            WG_INTERFACE="$2"
             shift 2
             ;;
-        --peers)
-            PEERS_FILE="$2"
+        --pubkey)
+            PUBKEY="$2"
+            shift 2
+            ;;
+        --allowed-ips)
+            ALLOWED_IPS="$2"
             shift 2
             ;;
         -h|--help)
-            echo "Usage: $0 [--config /path/to/client.conf] [--peers /path/to/peers.conf]"
+            echo "Usage: $0 --pubkey <public_key> --allowed-ips <ips> [--interface wg0]"
             echo ""
-            echo "Configuration file search order:"
-            echo "  1. \$VALON_CONFIG or \$CONFIG_FILE"
-            echo "  2. --config argument"
-            echo "  3. ./valon-sync.conf"
-            echo "  4. ~/.config/valon/client.conf"
-            echo "  5. /etc/valon/client.conf"
+            echo "Options:"
+            echo "  --pubkey        WireGuard public key of the peer"
+            echo "  --allowed-ips   Allowed IP addresses (comma-separated)"
+            echo "  --interface     WireGuard interface name (default: wg0)"
             echo ""
-            echo "Peers file search order:"
-            echo "  1. \$VALON_PEERS or \$PEERS_FILE"
-            echo "  2. --peers argument"
-            echo "  3. ./peers.conf"
-            echo "  4. ~/.config/valon/peers.conf"
-            echo "  5. /etc/valon/peers.conf"
+            echo "Example:"
+            echo "  $0 --pubkey 'abc123...' --allowed-ips '100.100.0.2/32'"
             exit 0
             ;;
         *)
             echo "Unknown option: $1" >&2
+            echo "Use --help for usage information" >&2
             exit 1
             ;;
     esac
 done
 
-# Load configuration (or use environment variables)
-if [[ -n "$CONFIG_FILE" && -f "$CONFIG_FILE" ]]; then
-    source "$CONFIG_FILE"
-else
-    echo "Info: No config file found, using environment variables" >&2
-fi
-
-# Use environment variables as defaults
-WG_INTERFACE="${WG_INTERFACE:-${VALON_INTERFACE:-wg0}}"
-
-# Check if peers file was found
-if [[ -z "$PEERS_FILE" || ! -f "$PEERS_FILE" ]]; then
-    echo "Error: Peers file not found. Searched:" >&2
-    echo "  - \$VALON_PEERS or \$PEERS_FILE" >&2
-    echo "  - ./peers.conf" >&2
-    echo "  - ~/.config/valon/peers.conf" >&2
-    echo "  - /etc/valon/peers.conf" >&2
+# Validate required arguments
+if [[ -z "$PUBKEY" ]]; then
+    echo "Error: --pubkey is required" >&2
     exit 1
 fi
 
-echo "Using peers file: $PEERS_FILE"
+if [[ -z "$ALLOWED_IPS" ]]; then
+    echo "Error: --allowed-ips is required" >&2
+    exit 1
+fi
 
 # Check if running as root
 if [[ $EUID -ne 0 ]]; then
@@ -117,75 +68,16 @@ if ! ip link show "$WG_INTERFACE" &> /dev/null; then
     exit 1
 fi
 
-echo "Adding peers to $WG_INTERFACE..."
+echo "Adding peer to $WG_INTERFACE..."
+echo "  Public key: ${PUBKEY:0:20}..."
+echo "  Allowed IPs: $ALLOWED_IPS"
 
-# Parse peers.conf and extract peer definitions
-peer_count=0
-while IFS= read -r line; do
-    # Skip comments and empty lines
-    [[ "$line" =~ ^#.*$ ]] && continue
-    [[ -z "$line" ]] && continue
-    
-    # Skip lines without =
-    [[ ! "$line" =~ = ]] && continue
-    
-    # Split on first = only
-    key="${line%%=*}"
-    value="${line#*=}"
-    
-    # Remove leading/trailing whitespace
-    key=$(echo "$key" | xargs)
-    value=$(echo "$value" | xargs)
-    
-    # Match PEER_<name>_PUBKEY
-    if [[ "$key" =~ ^PEER_([A-Z0-9_]+)_PUBKEY$ ]]; then
-        peer_name="${BASH_REMATCH[1]}"
-        pubkey="$value"
-        
-        # Look for corresponding ALIAS and ALLOWED_IPS
-        alias_key="PEER_${peer_name}_ALIAS"
-        allowed_ips_key="PEER_${peer_name}_ALLOWED_IPS"
-        alias=""
-        allowed_ips=""
-        
-        while IFS= read -r peer_line; do
-            [[ "$peer_line" =~ ^#.*$ ]] && continue
-            [[ -z "$peer_line" ]] && continue
-            [[ ! "$peer_line" =~ = ]] && continue
-            
-            k="${peer_line%%=*}"
-            v="${peer_line#*=}"
-            k=$(echo "$k" | xargs)
-            v=$(echo "$v" | xargs)
-            
-            if [[ "$k" == "$alias_key" ]]; then
-                alias="$v"
-            elif [[ "$k" == "$allowed_ips_key" ]]; then
-                allowed_ips="$v"
-            fi
-        done < "$PEERS_FILE"
-        
-        # Default allowed IPs if not specified (all WireGuard subnet)
-        if [[ -z "$allowed_ips" ]]; then
-            allowed_ips="${ALLOWED_IPS:-100.100.0.0/24}"
-        fi
-        
-        # Add peer to WireGuard
-        echo "  Adding peer: $peer_name (alias: ${alias:-none})"
-        echo "    Public key: ${pubkey:0:20}..."
-        echo "    Allowed IPs: $allowed_ips"
-        
-        # Check if peer already exists
-        if wg show "$WG_INTERFACE" | grep -q "$pubkey"; then
-            echo "    → Already exists, skipping"
-        else
-            wg set "$WG_INTERFACE" peer "$pubkey" allowed-ips "$allowed_ips"
-            echo "    → Added successfully"
-            ((peer_count++))
-        fi
-        
-        echo
-    fi
-done < "$PEERS_FILE"
-
-echo "✓ Added $peer_count new peer(s) to $WG_INTERFACE"
+# Check if peer already exists
+if wg show "$WG_INTERFACE" | grep -q "$PUBKEY"; then
+    echo "  → Peer already exists, updating allowed-ips..."
+    wg set "$WG_INTERFACE" peer "$PUBKEY" allowed-ips "$ALLOWED_IPS"
+    echo "  ✓ Updated successfully"
+else
+    wg set "$WG_INTERFACE" peer "$PUBKEY" allowed-ips "$ALLOWED_IPS"
+    echo "  ✓ Added successfully"
+fi

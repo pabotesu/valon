@@ -284,7 +284,14 @@ process_peer() {
         wg set "$WG_INTERFACE" peer "$pubkey" endpoint "$best_endpoint"
         echo "  ✓ Updated successfully"
     else
-        echo "  ⚠ No reachable endpoint found"
+        # If both LAN and NAT tests failed, use NAT endpoint anyway
+        if [[ -n "$nat_endpoint" ]]; then
+            echo "  ⚠ No reachable endpoint found, using NAT endpoint anyway: $nat_endpoint"
+            wg set "$WG_INTERFACE" peer "$pubkey" endpoint "$nat_endpoint"
+            echo "  ✓ Updated successfully (fallback)"
+        else
+            echo "  ⚠ No endpoint found"
+        fi
     fi
     
     echo

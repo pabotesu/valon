@@ -320,14 +320,21 @@ else
     echo
     
     peer_count=0
-    while read -r line; do
-        if [[ "$line" =~ ^peer:\ (.+)$ ]]; then
-            pubkey="${BASH_REMATCH[1]}"
-            
-            # Look up peer name from peers.conf
-            peer_name=""
-            while IFS='=' read -r key value; do
-                [[ "$key" =~ ^#.*$ ]] && continue
+    while read -r pubkey rest; do
+        # Skip interface line (first line)
+        [[ "$pubkey" == "$OWN_PUBKEY" ]] && continue
+        [[ -z "$pubkey" ]] && continue
+        
+        # Look up peer name from peers.conf
+        peer_name=""
+        if [[ -n "$PEERS_FILE" && -f "$PEERS_FILE" ]]; then
+            while IFS= read -r line; do
+                [[ "$line" =~ ^#.*$ ]] && continue
+                [[ -z "$line" ]] && continue
+                [[ ! "$line" =~ = ]] && continue
+                
+                key="${line%%=*}"
+                value="${line#*=}"
                 key=$(echo "$key" | xargs)
                 value=$(echo "$value" | xargs)
                 
@@ -335,11 +342,11 @@ else
                     peer_name=$(echo "$key" | sed 's/PEER_\(.*\)_PUBKEY/\1/')
                     break
                 fi
-            done < "$PEERS_FILE" 2>/dev/null || true
-            
-            process_peer "$pubkey" "${peer_name:-unknown}"
-            ((peer_count++))
+            done < "$PEERS_FILE"
         fi
+        
+        process_peer "$pubkey" "${peer_name:-unknown}"
+        ((peer_count++))
     done < <(wg show "$WG_INTERFACE" dump | tail -n +2)
     
     echo "✓ Processed $peer_count peer(s)"

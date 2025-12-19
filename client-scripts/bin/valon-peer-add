@@ -121,10 +121,17 @@ echo "Adding peers to $WG_INTERFACE..."
 
 # Parse peers.conf and extract peer definitions
 peer_count=0
-while IFS='=' read -r key value; do
+while IFS= read -r line; do
     # Skip comments and empty lines
-    [[ "$key" =~ ^#.*$ ]] && continue
-    [[ -z "$key" ]] && continue
+    [[ "$line" =~ ^#.*$ ]] && continue
+    [[ -z "$line" ]] && continue
+    
+    # Skip lines without =
+    [[ ! "$line" =~ = ]] && continue
+    
+    # Split on first = only
+    key="${line%%=*}"
+    value="${line#*=}"
     
     # Remove leading/trailing whitespace
     key=$(echo "$key" | xargs)
@@ -138,7 +145,13 @@ while IFS='=' read -r key value; do
         # Look for corresponding ALIAS
         alias_key="PEER_${peer_name}_ALIAS"
         alias=""
-        while IFS='=' read -r k v; do
+        while IFS= read -r alias_line; do
+            [[ "$alias_line" =~ ^#.*$ ]] && continue
+            [[ -z "$alias_line" ]] && continue
+            [[ ! "$alias_line" =~ = ]] && continue
+            
+            k="${alias_line%%=*}"
+            v="${alias_line#*=}"
             k=$(echo "$k" | xargs)
             v=$(echo "$v" | xargs)
             if [[ "$k" == "$alias_key" ]]; then

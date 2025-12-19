@@ -142,34 +142,44 @@ while IFS= read -r line; do
         peer_name="${BASH_REMATCH[1]}"
         pubkey="$value"
         
-        # Look for corresponding ALIAS
+        # Look for corresponding ALIAS and ALLOWED_IPS
         alias_key="PEER_${peer_name}_ALIAS"
+        allowed_ips_key="PEER_${peer_name}_ALLOWED_IPS"
         alias=""
-        while IFS= read -r alias_line; do
-            [[ "$alias_line" =~ ^#.*$ ]] && continue
-            [[ -z "$alias_line" ]] && continue
-            [[ ! "$alias_line" =~ = ]] && continue
+        allowed_ips=""
+        
+        while IFS= read -r peer_line; do
+            [[ "$peer_line" =~ ^#.*$ ]] && continue
+            [[ -z "$peer_line" ]] && continue
+            [[ ! "$peer_line" =~ = ]] && continue
             
-            k="${alias_line%%=*}"
-            v="${alias_line#*=}"
+            k="${peer_line%%=*}"
+            v="${peer_line#*=}"
             k=$(echo "$k" | xargs)
             v=$(echo "$v" | xargs)
+            
             if [[ "$k" == "$alias_key" ]]; then
                 alias="$v"
-                break
+            elif [[ "$k" == "$allowed_ips_key" ]]; then
+                allowed_ips="$v"
             fi
         done < "$PEERS_FILE"
+        
+        # Default allowed IPs if not specified (all WireGuard subnet)
+        if [[ -z "$allowed_ips" ]]; then
+            allowed_ips="${ALLOWED_IPS:-100.100.0.0/24}"
+        fi
         
         # Add peer to WireGuard
         echo "  Adding peer: $peer_name (alias: ${alias:-none})"
         echo "    Public key: ${pubkey:0:20}..."
-        echo "    Allowed IPs: $ALLOWED_IPS"
+        echo "    Allowed IPs: $allowed_ips"
         
         # Check if peer already exists
         if wg show "$WG_INTERFACE" | grep -q "$pubkey"; then
             echo "    → Already exists, skipping"
         else
-            wg set "$WG_INTERFACE" peer "$pubkey" allowed-ips "$ALLOWED_IPS"
+            wg set "$WG_INTERFACE" peer "$pubkey" allowed-ips "$allowed_ips"
             echo "    → Added successfully"
             ((peer_count++))
         fi

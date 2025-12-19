@@ -1,14 +1,18 @@
 # VALON Peer Configuration
 # Format: PEER_<name>_PUBKEY=<base64-pubkey>
 #         PEER_<name>_ALIAS=<dns-alias>
+#         PEER_<name>_ALLOWED_IPS=<cidr> (optional, defaults to 100.100.0.0/24)
 #
 # Example:
 # PEER_SERVER_PUBKEY=ylVE/jMSSR1E6Dzf0jGwJZ+29z/NWYYayc82LxQqFgQ=
 # PEER_SERVER_ALIAS=discovery
+# PEER_SERVER_ALLOWED_IPS=100.100.0.1/32
 #
 # PEER_FRIEND_PUBKEY=+tSa4Dl/QnlFBPIqZZflsutMwwtcRaJA0vWbv1dUYyc=
 # PEER_FRIEND_ALIAS=client01
+# PEER_FRIEND_ALLOWED_IPS=100.100.0.2/32
 
 # Discovery Role (required)
 PEER_DISCOVERY_PUBKEY=ylVE/jMSSR1E6Dzf0jGwJZ+29z/NWYYayc82LxQqFgQ=
 PEER_DISCOVERY_ALIAS=discovery
+PEER_DISCOVERY_ALLOWED_IPS=100.100.0.0/24

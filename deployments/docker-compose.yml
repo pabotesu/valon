@@ -28,8 +28,7 @@ services:
     cap_add:
       - NET_ADMIN
     depends_on:
-      etcd:
-        condition: service_healthy
+      - etcd
     volumes:
       - ../configs/Corefile:/etc/coredns/Corefile:ro
     restart: unless-stopped

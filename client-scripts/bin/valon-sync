@@ -31,7 +31,6 @@ find_config() {
 
 # Default paths
 CONFIG_FILE="$(find_config || true)"
-PEERS_FILE="${PEERS_FILE:-${HOME}/.config/valon/peers.conf}"
 TARGET_PEER=""
 
 # Parse arguments
@@ -77,7 +76,12 @@ WG_INTERFACE="${WG_INTERFACE:-${VALON_INTERFACE:-wg0}}"
 OWN_WG_IP="${OWN_WG_IP:-${VALON_WG_IP}}"
 OWN_ALIAS="${OWN_ALIAS:-${VALON_ALIAS}}"
 DISCOVERY_API="${DISCOVERY_API:-${VALON_API:-http://100.100.0.1:8053}}"
+DISCOVERY_DNS="${DISCOVERY_DNS:-${VALON_DNS:-100.100.0.1}}"
+DISCOVERY_PUBKEY="${DISCOVERY_PUBKEY:-${VALON_DISCOVERY_PUBKEY}}"
 DNS_ZONE="${DNS_ZONE:-${VALON_DNS_ZONE:-valon.internal}}"
+PING_COUNT="${PING_COUNT:-2}"
+PING_TIMEOUT="${PING_TIMEOUT:-1}"
+WG_PORT="${WG_PORT:-51820}"
 
 # Check if running as root (only required for wg commands)
 check_root() {
@@ -193,49 +197,15 @@ test_endpoint() {
 # Helper: Get endpoints for a peer
 get_peer_endpoints() {
     local pubkey="$1"
-    local label alias
+    local label
     
     label=$(pubkey_to_label "$pubkey")
     
-    # Try alias first (from peers.conf)
-    while IFS='=' read -r key value; do
-        [[ "$key" =~ ^#.*$ ]] && continue
-        [[ -z "$key" ]] && continue
-        
-        key=$(echo "$key" | xargs)
-        value=$(echo "$value" | xargs)
-        
-        if [[ "$value" == "$pubkey" ]]; then
-            # Found matching pubkey, look for alias
-            peer_name=$(echo "$key" | sed 's/PEER_\(.*\)_PUBKEY/\1/')
-            alias_key="PEER_${peer_name}_ALIAS"
-            
-            while IFS='=' read -r k v; do
-                k=$(echo "$k" | xargs)
-                v=$(echo "$v" | xargs)
-                if [[ "$k" == "$alias_key" ]]; then
-                    alias="$v"
-                    break
-                fi
-            done < "$PEERS_FILE"
-            break
-        fi
-    done < "$PEERS_FILE"
-    
-    # Query DNS for endpoints
+    # Query DNS for endpoints (pubkey-based only)
     local lan_endpoint nat_endpoint
     
-    if [[ -n "$alias" ]]; then
-        # Try alias-based query first
-        lan_endpoint=$(dig @"$DISCOVERY_DNS" +short "lan.${alias}.$DNS_ZONE" 2>/dev/null | grep -v '^;' | head -n1)
-        nat_endpoint=$(dig @"$DISCOVERY_DNS" +short "nated.${alias}.$DNS_ZONE" 2>/dev/null | grep -v '^;' | head -n1)
-    fi
-    
-    # Fallback to pubkey-based query
-    if [[ -z "$lan_endpoint" && -z "$nat_endpoint" ]]; then
-        lan_endpoint=$(dig @"$DISCOVERY_DNS" +short "lan.${label}.$DNS_ZONE" 2>/dev/null | grep -v '^;' | head -n1)
-        nat_endpoint=$(dig @"$DISCOVERY_DNS" +short "nated.${label}.$DNS_ZONE" 2>/dev/null | grep -v '^;' | head -n1)
-    fi
+    lan_endpoint=$(dig @"$DISCOVERY_DNS" +short "lan.${label}.$DNS_ZONE" 2>/dev/null | grep -v '^;' | head -n1)
+    nat_endpoint=$(dig @"$DISCOVERY_DNS" +short "nated.${label}.$DNS_ZONE" 2>/dev/null | grep -v '^;' | head -n1)
     
     # Append port if needed
     if [[ -n "$lan_endpoint" && ! "$lan_endpoint" =~ : ]]; then
@@ -325,27 +295,16 @@ else
         [[ "$pubkey" == "$OWN_PUBKEY" ]] && continue
         [[ -z "$pubkey" ]] && continue
         
-        # Look up peer name from peers.conf
-        peer_name=""
-        if [[ -n "$PEERS_FILE" && -f "$PEERS_FILE" ]]; then
-            while IFS= read -r line; do
-                [[ "$line" =~ ^#.*$ ]] && continue
-                [[ -z "$line" ]] && continue
-                [[ ! "$line" =~ = ]] && continue
-                
-                key="${line%%=*}"
-                value="${line#*=}"
-                key=$(echo "$key" | xargs)
-                value=$(echo "$value" | xargs)
-                
-                if [[ "$value" == "$pubkey" ]]; then
-                    peer_name=$(echo "$key" | sed 's/PEER_\(.*\)_PUBKEY/\1/')
-                    break
-                fi
-            done < "$PEERS_FILE"
+        # Skip Discovery Role peer (has allowed-ips 100.100.0.0/24 or contains 100.100.0.1)
+        if [[ -n "$DISCOVERY_PUBKEY" && "$pubkey" == "$DISCOVERY_PUBKEY" ]]; then
+            continue
         fi
         
-        process_peer "$pubkey" "${peer_name:-unknown}"
+        # Get peer name from DNS (optional, for display only)
+        label=$(pubkey_to_label "$pubkey")
+        peer_name="$label"
+        
+        process_peer "$pubkey" "$peer_name"
         ((peer_count++))
     done < <(wg show "$WG_INTERFACE" dump | tail -n +2)
     

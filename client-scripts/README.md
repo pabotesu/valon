@@ -112,7 +112,16 @@ sudo valon-sync
 
 ### 1. Peer追加（手動実行）
 
+**重要**: Discovery Roleは既に`wg0.conf`で設定されているため、`peers.conf`には**他のピア（クライアント）のみ**を記載してください。
+
 ```bash
+# peers.confに他のクライアントを定義
+cat > peers.conf << EOF
+PEER_NIXBOOK_PUBKEY=4YtYaSKa0CKze5VRnl70qOc6RqRvn6mZUflu5KJt5BU=
+PEER_NIXBOOK_ALIAS=nix-book
+PEER_NIXBOOK_ALLOWED_IPS=100.100.0.3/32
+EOF
+
 # peers.confに定義したPeerをWireGuardに追加
 sudo valon-peer-add
 ```

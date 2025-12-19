@@ -3,16 +3,16 @@
 #         PEER_<name>_ALIAS=<dns-alias>
 #         PEER_<name>_ALLOWED_IPS=<cidr> (optional, defaults to 100.100.0.0/24)
 #
-# Example:
-# PEER_SERVER_PUBKEY=ylVE/jMSSR1E6Dzf0jGwJZ+29z/NWYYayc82LxQqFgQ=
-# PEER_SERVER_ALIAS=discovery
-# PEER_SERVER_ALLOWED_IPS=100.100.0.1/32
+# NOTE: Discovery Role is already configured in wg0.conf, so don't add it here.
+#       Only add other peers (clients) you want to connect to.
 #
+# Example:
 # PEER_FRIEND_PUBKEY=+tSa4Dl/QnlFBPIqZZflsutMwwtcRaJA0vWbv1dUYyc=
 # PEER_FRIEND_ALIAS=client01
 # PEER_FRIEND_ALLOWED_IPS=100.100.0.2/32
+#
+# PEER_LAPTOP_PUBKEY=4YtYaSKa0CKze5VRnl70qOc6RqRvn6mZUflu5KJt5BU=
+# PEER_LAPTOP_ALIAS=mylaptop
+# PEER_LAPTOP_ALLOWED_IPS=100.100.0.3/32
 
-# Discovery Role (required)
-PEER_DISCOVERY_PUBKEY=ylVE/jMSSR1E6Dzf0jGwJZ+29z/NWYYayc82LxQqFgQ=
-PEER_DISCOVERY_ALIAS=discovery
-PEER_DISCOVERY_ALLOWED_IPS=100.100.0.0/24
+# Add your peers here (DO NOT add Discovery Role)

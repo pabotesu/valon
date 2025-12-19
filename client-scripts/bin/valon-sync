@@ -295,8 +295,15 @@ else
         [[ "$pubkey" == "$OWN_PUBKEY" ]] && continue
         [[ -z "$pubkey" ]] && continue
         
-        # Skip Discovery Role peer (has allowed-ips 100.100.0.0/24 or contains 100.100.0.1)
+        # Skip Discovery Role peer (check allowed-ips for 100.100.0.0/24)
         if [[ -n "$DISCOVERY_PUBKEY" && "$pubkey" == "$DISCOVERY_PUBKEY" ]]; then
+            continue
+        fi
+        
+        # Also skip if allowed-ips contains 100.100.0.0/24 (likely Discovery)
+        allowed_ips=$(echo "$rest" | awk '{print $4}')
+        if [[ "$allowed_ips" =~ 100\.100\.0\.0/24 || "$allowed_ips" =~ 100\.100\.0\.1/32 ]]; then
+            echo "Skipping Discovery Role peer: ${pubkey:0:20}..."
             continue
         fi
         

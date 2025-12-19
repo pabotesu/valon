@@ -9,51 +9,104 @@ client-scripts/
 ├── bin/
 │   ├── valon-peer-add     # Peer追加スクリプト
 │   └── valon-sync         # エンドポイント同期(自分の情報更新＋他Peerの情報取得)
-└── etc/valon/
-    ├── client.conf.example  # クライアント設定
-    └── peers.conf.example   # Peer定義
+└── config_examples/
+    ├── valon-sync.conf.example  # 設定ファイルの例
+    └── peers.conf.example       # Peer定義の例
 ```
 
 ## インストール
 
+### 最小インストール（推奨）
+
 ```bash
-# コピー
-sudo cp -r etc/valon /etc/
+# スクリプトのみコピー
+sudo cp bin/* /usr/local/bin/
+sudo chmod +x /usr/local/bin/valon-*
+
+# 設定ファイルはカレントディレクトリまたはホームディレクトリに配置
+mkdir -p ~/.config/valon
+cp config_examples/valon-sync.conf.example ~/.config/valon/client.conf
+vi ~/.config/valon/client.conf  # 必要に応じて編集
+```
+
+### システム全体にインストール
+
+```bash
+# システムディレクトリにコピー
+sudo mkdir -p /etc/valon
+sudo cp config_examples/valon-sync.conf.example /etc/valon/client.conf
 sudo cp bin/* /usr/local/bin/
 sudo chmod +x /usr/local/bin/valon-*
 
 # 設定ファイルを編集
-sudo cp /etc/valon/client.conf.example /etc/valon/client.conf
-sudo cp /etc/valon/peers.conf.example /etc/valon/peers.conf
-sudo vi /etc/valon/client.conf  # OWN_WG_IP, OWN_ALIAS を設定
-sudo vi /etc/valon/peers.conf   # 接続したいPeerを追加
+sudo vi /etc/valon/client.conf
+```
+
+## 設定ファイルの探索順序
+
+スクリプトは以下の順序で設定ファイルを探します：
+
+1. 環境変数: `$VALON_CONFIG` または `$CONFIG_FILE`
+2. コマンドライン引数: `--config <path>`
+3. カレントディレクトリ: `./valon-sync.conf`
+4. ユーザーホーム: `~/.config/valon/client.conf`
+5. システム: `/etc/valon/client.conf`
+
+設定ファイルが見つからない場合は、環境変数のみで動作します。
+
+## 環境変数での設定
+
+設定ファイルなしで環境変数のみで動作可能：
+
+```bash
+export VALON_INTERFACE=wg0
+export VALON_WG_IP=100.100.0.2
+export VALON_ALIAS=mylaptop
+export VALON_API=http://100.100.0.1:8053
+export VALON_DNS_ZONE=valon.internal
+
+sudo -E valon-sync
 ```
 
 ## 使い方
 
-### 初回セットアップ
+### 初回セットアップ（最小構成）
 
 ```bash
-# 1. Discovery Role側でPeerを追加し、WireGuard設定を取得
-# (valonctl peer add <pubkey> --alias client01 の出力)
-
-# 2. WireGuard設定ファイルを作成
-sudo vi /etc/wireguard/wg0.conf
-# → valonctlの出力をコピー
-# → PrivateKeyを挿入
-
-# 3. WireGuardインターフェースを起動
+# 1. WireGuardインターフェースを起動
+# (valonctl peer addで生成された設定を/etc/wireguard/wg0.confに保存済みとする)
 sudo wg-quick up wg0
 
-# 4. 接続確認
+# 2. 接続確認
 ping -c 3 100.100.0.1
 dig @100.100.0.1 discovery.valon.internal
 
-# 5. 他のPeerを追加(必要なら peers.conf を編集)
-sudo vi /etc/valon/peers.conf
-sudo valon-peer-add
+# 3. エンドポイント同期（環境変数で設定）
+export VALON_WG_IP=$(ip -4 addr show wg0 | grep -oP '(?<=inet\s)\d+(\.\d+){3}')
+export VALON_ALIAS=mylaptop
+sudo -E valon-sync
+```
 
-# 6. 初回同期実行
+### 初回セットアップ（設定ファイル使用）
+
+```bash
+# 1. 設定ファイル作成
+mkdir -p ~/.config/valon
+cat > ~/.config/valon/client.conf << EOF
+WG_INTERFACE=wg0
+OWN_WG_IP=100.100.0.2
+OWN_ALIAS=mylaptop
+DISCOVERY_API=http://100.100.0.1:8053
+DNS_ZONE=valon.internal
+EOF
+
+# 2. WireGuardインターフェースを起動
+sudo wg-quick up wg0
+
+# 3. 接続確認
+ping -c 3 100.100.0.1
+
+# 4. エンドポイント同期
 sudo valon-sync
 ```
 
@@ -78,7 +131,7 @@ sudo valon-sync --peer <pubkey>
 
 ## 自動化
 
-### systemd-timer で定期実行
+### systemd-timer で定期実行（環境変数版）
 
 ```bash
 # /etc/systemd/system/valon-sync.service
@@ -88,7 +141,27 @@ After=network-online.target wg-quick@wg0.service
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/bin/valon-sync
+Environment="VALON_INTERFACE=wg0"
+Environment="VALON_API=http://100.100.0.1:8053"
+ExecStart=/bin/bash -c 'export VALON_WG_IP=$(ip -4 addr show wg0 | grep -oP "(?<=inet\\s)\\d+(\\.\\d+){3}") && export VALON_ALIAS=$(hostname) && /usr/local/bin/valon-sync'
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+```
+
+### systemd-timer で定期実行（設定ファイル版）
+
+```bash
+# /etc/systemd/system/valon-sync.service
+[Unit]
+Description=VALON Sync - Update own endpoint and resolve peer endpoints
+After=network-online.target wg-quick@wg0.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/valon-sync --config /etc/valon/client.conf
 StandardOutput=journal
 StandardError=journal
 

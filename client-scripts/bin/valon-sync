@@ -5,9 +5,33 @@
 
 set -e
 
+# Configuration search order:
+# 1. Environment variable: $VALON_CONFIG or $CONFIG_FILE
+# 2. Command line argument: --config
+# 3. Current directory: ./valon-sync.conf
+# 4. User home: ~/.config/valon/client.conf
+# 5. System: /etc/valon/client.conf
+find_config() {
+    local candidates=(
+        "${VALON_CONFIG}"
+        "${CONFIG_FILE}"
+        "./valon-sync.conf"
+        "${HOME}/.config/valon/client.conf"
+        "/etc/valon/client.conf"
+    )
+    
+    for conf in "${candidates[@]}"; do
+        if [[ -n "$conf" && -f "$conf" ]]; then
+            echo "$conf"
+            return 0
+        fi
+    done
+    return 1
+}
+
 # Default paths
-CONFIG_FILE="${CONFIG_FILE:-/etc/valon/client.conf}"
-PEERS_FILE="${PEERS_FILE:-/etc/valon/peers.conf}"
+CONFIG_FILE="$(find_config || true)"
+PEERS_FILE="${PEERS_FILE:-${HOME}/.config/valon/peers.conf}"
 TARGET_PEER=""
 
 # Parse arguments
@@ -25,6 +49,13 @@ while [[ $# -gt 0 ]]; do
             echo "Usage: $0 [--config /path/to/client.conf] [--peer <pubkey>]"
             echo ""
             echo "Sync own LAN endpoint to Discovery and update peer endpoints"
+            echo ""
+            echo "Configuration search order:"
+            echo "  1. \$VALON_CONFIG or \$CONFIG_FILE"
+            echo "  2. --config argument"
+            echo "  3. ./valon-sync.conf"
+            echo "  4. ~/.config/valon/client.conf"
+            echo "  5. /etc/valon/client.conf"
             exit 0
             ;;
         *)
@@ -34,22 +65,31 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Load configuration
-if [[ ! -f "$CONFIG_FILE" ]]; then
-    echo "Error: Config file not found: $CONFIG_FILE" >&2
-    exit 1
+# Load configuration (or use environment variables as fallback)
+if [[ -n "$CONFIG_FILE" && -f "$CONFIG_FILE" ]]; then
+    source "$CONFIG_FILE"
+else
+    echo "Info: No config file found, using environment variables" >&2
 fi
-source "$CONFIG_FILE"
 
-# Check if running as root
-if [[ $EUID -ne 0 ]]; then
-   echo "Error: This script must be run as root" >&2
-   exit 1
-fi
+# Use environment variables as defaults
+WG_INTERFACE="${WG_INTERFACE:-${VALON_INTERFACE:-wg0}}"
+OWN_WG_IP="${OWN_WG_IP:-${VALON_WG_IP}}"
+OWN_ALIAS="${OWN_ALIAS:-${VALON_ALIAS}}"
+DISCOVERY_API="${DISCOVERY_API:-${VALON_API:-http://100.100.0.1:8053}}"
+DNS_ZONE="${DNS_ZONE:-${VALON_DNS_ZONE:-valon.internal}}"
+
+# Check if running as root (only required for wg commands)
+check_root() {
+    if [[ $EUID -ne 0 ]]; then
+        return 1
+    fi
+    return 0
+}
 
 # Validate configuration
-if [[ -z "$WG_INTERFACE" || -z "$OWN_WG_IP" || -z "$OWN_ALIAS" ]]; then
-    echo "Error: Missing required configuration (WG_INTERFACE, OWN_WG_IP, OWN_ALIAS)" >&2
+if [[ -z "$WG_INTERFACE" ]]; then
+    echo "Error: WG_INTERFACE not set (use config file or \$VALON_INTERFACE)" >&2
     exit 1
 fi
 

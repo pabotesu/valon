@@ -5,9 +5,28 @@
 
 set -e
 
+# Configuration search order (same as valon-sync)
+find_config() {
+    local candidates=(
+        "${VALON_CONFIG}"
+        "${CONFIG_FILE}"
+        "./valon-sync.conf"
+        "${HOME}/.config/valon/client.conf"
+        "/etc/valon/client.conf"
+    )
+    
+    for conf in "${candidates[@]}"; do
+        if [[ -n "$conf" && -f "$conf" ]]; then
+            echo "$conf"
+            return 0
+        fi
+    done
+    return 1
+}
+
 # Default paths
-CONFIG_FILE="${CONFIG_FILE:-/etc/valon/client.conf}"
-PEERS_FILE="${PEERS_FILE:-/etc/valon/peers.conf}"
+CONFIG_FILE="$(find_config || true)"
+PEERS_FILE="${PEERS_FILE:-${HOME}/.config/valon/peers.conf}"
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -22,6 +41,13 @@ while [[ $# -gt 0 ]]; do
             ;;
         -h|--help)
             echo "Usage: $0 [--config /path/to/client.conf] [--peers /path/to/peers.conf]"
+            echo ""
+            echo "Configuration search order:"
+            echo "  1. \$VALON_CONFIG or \$CONFIG_FILE"
+            echo "  2. --config argument"
+            echo "  3. ./valon-sync.conf"
+            echo "  4. ~/.config/valon/client.conf"
+            echo "  5. /etc/valon/client.conf"
             exit 0
             ;;
         *)
@@ -31,21 +57,26 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Load configuration
-if [[ ! -f "$CONFIG_FILE" ]]; then
-    echo "Error: Config file not found: $CONFIG_FILE" >&2
-    exit 1
+# Load configuration (or use environment variables)
+if [[ -n "$CONFIG_FILE" && -f "$CONFIG_FILE" ]]; then
+    source "$CONFIG_FILE"
+else
+    echo "Info: No config file found, using environment variables" >&2
 fi
-source "$CONFIG_FILE"
 
-if [[ ! -f "$PEERS_FILE" ]]; then
-    echo "Error: Peers file not found: $PEERS_FILE" >&2
-    exit 1
+# Use environment variables as defaults
+WG_INTERFACE="${WG_INTERFACE:-${VALON_INTERFACE:-wg0}}"
+
+if [[ -n "$PEERS_FILE" && -f "$PEERS_FILE" ]]; then
+    # Load peers from file if exists
+    :
+else
+    echo "Warning: Peers file not found: $PEERS_FILE" >&2
 fi
 
 # Check if running as root
 if [[ $EUID -ne 0 ]]; then
-   echo "Error: This script must be run as root" >&2
+   echo "Error: This script must be run as root (required for wg command)" >&2
    exit 1
 fi
 

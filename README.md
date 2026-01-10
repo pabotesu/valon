@@ -16,29 +16,48 @@ VALON は以下の機能を提供します：
 
 ## アーキテクチャ
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                       Discovery Role                            │
-│  ┌──────────┐  ┌──────────────┐  ┌────────────┐  ┌──────────┐ │
-│  │   etcd   │──│  CoreDNS     │  │  valonctl  │  │WireGuard │ │
-│  │          │  │  + valon     │  │  (管理CLI) │  │ wg0      │ │
-│  │(Peer DB) │  │  plugin      │  │            │  │          │ │
-│  └──────────┘  └──────────────┘  └────────────┘  └──────────┘ │
-│                        │ DNS-SD                                 │
-│                        │ DDNS API (8053)                        │
-└────────────────────────┼───────────────────────────────────────┘
-                         │
-            ┌────────────┴───────────────┐
-            │                            │
-    ┌───────▼────────┐          ┌───────▼────────┐
-    │  Client Role   │          │  Client Role   │
-    │  ┌──────────┐  │          │  ┌──────────┐  │
-    │  │WireGuard │  │          │  │WireGuard │  │
-    │  │  wg0     │  │          │  │  wg0     │  │
-    │  └──────────┘  │          │  └──────────┘  │
-    │  valon-sync    │          │  valon-sync    │
-    │  (定期実行)     │          │  (定期実行)     │
-    └────────────────┘          └────────────────┘
+```mermaid
+graph TB
+    subgraph discovery["Discovery Role"]
+        etcd["etcd<br/>(Peer DB)"]
+        coredns["CoreDNS<br/>+ valon plugin"]
+        valonctl["valonctl<br/>(管理CLI)"]
+        wg0_d["WireGuard<br/>wg0"]
+        
+        etcd --> coredns
+    end
+    
+    subgraph api["DNS-SD / DDNS API"]
+        dns["DNS Resolution<br/>100.100.0.1:53"]
+        ddns["DDNS Endpoint Update<br/>100.100.0.1:8053"]
+    end
+    
+    subgraph client1["Client Role"]
+        wg0_c1["WireGuard<br/>wg0"]
+        sync1["valon-sync<br/>(定期実行)"]
+    end
+    
+    subgraph client2["Client Role"]
+        wg0_c2["WireGuard<br/>wg0"]
+        sync2["valon-sync<br/>(定期実行)"]
+    end
+    
+    coredns -.-> dns
+    coredns -.-> ddns
+    
+    dns --> wg0_c1
+    dns --> wg0_c2
+    ddns --> wg0_c1
+    ddns --> wg0_c2
+    
+    wg0_d <--> wg0_c1
+    wg0_d <--> wg0_c2
+    wg0_c1 <--> wg0_c2
+    
+    style discovery fill:#e1f5ff
+    style api fill:#fff4e1
+    style client1 fill:#f0f0f0
+    style client2 fill:#f0f0f0
 ```
 
 ## ディレクトリ構成

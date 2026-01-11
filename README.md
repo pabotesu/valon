@@ -1,4 +1,4 @@
-# VALON - Virtual network based Adaptive to connections Logical Overlay NetWork
+# VALON - Virtual network based Adaptive to connections Logical Overlay Network
 
 **仮想ネットワークを利用した多様な接続環境に対応する論理構成によるオーバレイネットワーク**
 

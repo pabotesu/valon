@@ -38,11 +38,11 @@ type ExportedPeer struct {
 	Alias  string `json:"alias"`
 }
 
-func runPeerExp"peers.json" // default
+func runPeerExport(cmd *cobra.Command, args []string) error {
+	outputPath := "peers.json" // default
 	if len(args) > 0 {
 		outputPath = args[0]
-	} *cobra.Command, args []string) error {
-	outputPath := args[0]
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

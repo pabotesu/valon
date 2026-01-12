@@ -324,6 +324,9 @@ sudo valonctl peer add <公開鍵> --alias <エイリアス> --wg-ip 100.100.0.1
 # Peer 一覧表示
 sudo valonctl peer list
 
+# Peer 情報をJSONファイルにエクスポート（静的API用）
+sudo valonctl peer export peers.json
+
 # Peer 削除（公開鍵で指定）
 sudo valonctl peer remove <公開鍵>
 
@@ -436,6 +439,68 @@ dig @100.100.0.1 lan.client01.valon.internal
     "alias": "client01"
   }
   ```
+
+## 応用: 静的APIとしてのPeer情報公開
+
+`valonctl peer export` を使用して、Peer情報を静的JSONファイルとしてエクスポートし、Cloudflare PagesなどでホスティングできることができはCloudflare Pagesなどでホスティングできます。動的なエンドポイント情報（LAN/NAT）は除外されるため、公開しても安全です。
+
+### 使用例
+
+```bash
+# Peer情報をエクスポート
+sudo valonctl peer export peers.json
+
+# 出力例
+cat peers.json
+# [
+#   {
+#     "pubkey": "abc123...xyz=",
+#     "ip": "100.100.0.2",
+#     "alias": "client01"
+#   },
+#   {
+#     "pubkey": "def456...uvw=",
+#     "ip": "100.100.0.3",
+#     "alias": "client02"
+#   }
+# ]
+```
+
+### Cloudflare Pagesでの公開手順
+
+1. **GitHubリポジトリにJSONファイルをpush**
+   ```bash
+   # 定期的にエクスポート（cronなどで自動化）
+   sudo valonctl peer export public/peers.json
+   cd public
+   git add peers.json
+   git commit -m "Update peer list"
+   git push
+   ```
+
+2. **Cloudflare Pagesでデプロイ**
+   - Cloudflare Dashboardから新しいプロジェクトを作成
+   - GitHubリポジトリを接続
+   - ビルド設定は不要（静的ファイルのみ）
+   - `public/` ディレクトリを公開ディレクトリとして指定
+
+3. **クライアント側で使用**
+   ```bash
+   # 公開APIからPeer情報を取得
+   curl https://your-project.pages.dev/peers.json
+   
+   # または valon-sync スクリプトで活用
+   # （要実装: JSON APIからPeer情報を取得する機能）
+   ```
+
+### セキュリティ考慮事項
+
+- **公開されるデータ**: Pubkey、WireGuard IP、Alias のみ
+- **公開されないデータ**: LAN/NATエンドポイント（動的かつ機密性高い）
+- **推奨**: エイリアス名は推測されにくいものを使用
+- **オプション**: Cloudflare Accessで認証を追加
+
+この方法により、etcdへの直接アクセス不要でPeer情報を配布でき、スケーラビリティとセキュリティが向上します。
 
 ## 参考リンク
 

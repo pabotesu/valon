@@ -405,9 +405,9 @@ dig @100.100.0.1 lan.client01.valon.internal
 ### DNS レコード形式
 
 - **A レコード**: `<alias>.valon.internal` → WireGuard IP
-- **LAN A レコード**: `lan.<alias>.valon.internal` → LAN エンドポイント IP
-- **NAT A レコード**: `nated.<alias>.valon.internal` → NAT エンドポイント IP
-- **SRV レコード**: `_wireguard._udp.<alias>.valon.internal` → ポート情報
+- **LAN A レコード**: `lan.<pubkeey>.valon.internal` → LAN エンドポイント IP
+- **NAT A レコード**: `nated.<pubkey>.valon.internal` → NAT エンドポイント IP
+- **SRV レコード**: `_wireguard._udp.<pubkey>.valon.internal` → ポート情報
 
 ### etcd キー構造
 

@@ -7,11 +7,9 @@
 ```
 client-scripts/
 ├── bin/
-│   ├── valon-peer-add     # Peer追加スクリプト
 │   └── valon-sync         # エンドポイント同期(自分の情報更新＋他Peerの情報取得)
 └── config_examples/
-    ├── valon-sync.conf.example  # 設定ファイルの例
-    └── peers.conf.example       # Peer定義の例
+    └── valon-sync.conf.example  # 設定ファイルの例
 ```
 
 ## インストール
@@ -110,23 +108,7 @@ ping -c 3 100.100.0.1
 sudo valon-sync
 ```
 
-### 1. Peer追加（手動実行）
-
-**重要**: Discovery Roleは既に`wg0.conf`で設定されているため、`peers.conf`には**他のピア（クライアント）のみ**を記載してください。
-
-```bash
-# peers.confに他のクライアントを定義
-cat > peers.conf << EOF
-PEER_NIXBOOK_PUBKEY=4YtYaSKa0CKze5VRnl70qOc6RqRvn6mZUflu5KJt5BU=
-PEER_NIXBOOK_ALIAS=nix-book
-PEER_NIXBOOK_ALLOWED_IPS=100.100.0.3/32
-EOF
-
-# peers.confに定義したPeerをWireGuardに追加
-sudo valon-peer-add
-```
-
-### 2. エンドポイント同期（定期実行推奨）
+### エンドポイント同期（定期実行推奨）
 
 ```bash
 # 自分のLANエンドポイントを更新 + 全Peerのエンドポイントを解決して最適なものを設定
@@ -137,6 +119,25 @@ sudo valon-sync --peer <pubkey>
 ```
 
 **注意**: クライアントの初期登録はDiscovery Role側から行います。クライアント側から登録する機能はありません。
+
+### 手動でPeerを追加する場合（オプション）
+
+`valon-sync` は自動的にDiscoveryから全Peer情報を取得しますが、必要に応じて `wg` コマンドで手動追加も可能です：
+
+```bash
+# 基本的な追加
+sudo wg set <interface> peer <public_key> allowed-ips <ip_address>/32
+
+# NAT越え用にpersistent-keepaliveを設定（推奨: 25秒）
+sudo wg set <interfasce> peer <public_key> allowed-ips <ip_address>/32 persistent-keepalive 25
+
+# 例
+sudo wg set wg0 peer "abc123...xyz=" \
+  allowed-ips 100.100.0.3/32 \
+  persistent-keepalive 25
+```
+
+**ヒント**: 手動追加後も `valon-sync` が動的にエンドポイントを最適化します。
 
 ## 自動化
 
@@ -205,8 +206,7 @@ sudo systemctl start valon-sync.timer
 ### 初回セットアップ時
 1. **Register**: Discovery Role側の管理コマンドでこのクライアントを登録
 2. **WireGuard**: valonctlの出力をもとに `/etc/wireguard/wg0.conf` を作成し `wg-quick up`
-3. **Add Peers**: `valon-peer-add` が他のPeerをWireGuardに追加
-4. **Sync**: `valon-sync` が初回同期を実行
+3. **Sync**: `valon-sync` が初回同期を実行（Discoveryから他のPeer情報を自動取得）
 
 ### 通常運用時
 1. **定期的**: `valon-sync` (timer) が定期実行(60秒間隔推奨)
